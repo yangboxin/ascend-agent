@@ -19,9 +19,9 @@
 **Wave 1 *(foundation)* — Plan 01-01** ✅
 - Project scaffold, pyproject.toml, Pydantic models (RepoInfo, TraceInfo, ConfigEnv, ContextDocument), config/settings, test infrastructure
 
-**Wave 2 *(parallel — context builder + MCP server)* — Plans 01-02, 01-04**
-- 01-02: RepoScanner (pathlib + .gitignore), TraceParser (regex), 7 unit tests
-- 01-04: FastMCP server, code search tool (rg + Python fallback), 3 tool stubs
+**Wave 2 *(parallel — context builder + MCP server)* — Plans 01-02, 01-04** ✅
+- 01-02: RepoScanner (pathlib + .gitignore), TraceParser (regex), 7 unit tests ✅
+- 01-04: FastMCP server, code search tool (rg + Python fallback), 3 tool stubs ✅
 
 **Wave 3 *(CLI integration)* — Plan 01-03**
 - Typer app, diagnose command, Rich output, three input methods, visual verify checkpoint
