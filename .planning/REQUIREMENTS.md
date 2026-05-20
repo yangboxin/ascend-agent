@@ -53,8 +53,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ARCH-01 | Phase 1 | Pending |
-| ARCH-02 | Phase 1 | Pending |
+| ARCH-01 | Phase 1 | Verified ✓ |
+| ARCH-02 | Phase 1 | Verified ✓ |
 | DIAG-01 | Phase 2 | Pending |
 | DIAG-02 | Phase 2 | Pending |
 | FIX-01 | Phase 3 | Pending |

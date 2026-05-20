@@ -4,15 +4,16 @@
 
 ---
 
-## Phase 1: Architecture Foundation
+## Phase 1: Architecture Foundation ✅
 **Goal:** Build the core infrastructure layers — CLI interaction, context builder, and tool layer foundation.
+**Completed:** 2026-05-20
 
 **Requirements:** ARCH-01, ARCH-02
 
 **Success Criteria:**
-1. Agent can accept code repository path as input (local)
-2. Agent can accept stack traces/logs as input (file or pasted text)
-3. CLI interface exists for running the agent
+1. ✅ Agent can accept code repository path as input (local)
+2. ✅ Agent can accept stack traces/logs as input (file or pasted text)
+3. ✅ CLI interface exists for running the agent
 
 **Plans (4 in 3 waves):**
 
@@ -23,8 +24,8 @@
 - 01-02: RepoScanner (pathlib + .gitignore), TraceParser (regex), 7 unit tests ✅
 - 01-04: FastMCP server, code search tool (rg + Python fallback), 3 tool stubs ✅
 
-**Wave 3 *(CLI integration)* — Plan 01-03**
-- Typer app, diagnose command, Rich output, three input methods, visual verify checkpoint
+**Wave 3 *(CLI integration)* — Plan 01-03** ✅
+- Typer app, diagnose command, Rich output, three input methods, visual verify checkpoint ✅
 
 **Cross-cutting constraints:**
 - `print()` must never be used in MCP tools — use `ctx.info()` or `stderr`
@@ -85,7 +86,7 @@
 
 | Phase | Name | Requirements | Success Criteria |
 |-------|------|--------------|------------------|
-| 1 | Architecture Foundation | ARCH-01, ARCH-02 | 3 |
+| 1 | Architecture Foundation ✅ | ARCH-01, ARCH-02 | 3 ✓ |
 | 2 | Diagnosis Engine | DIAG-01, DIAG-02 | 3 |
 | 3 | Fix Generation | FIX-01, FIX-02 | 3 |
 | 4 | Reproduction Capability | REPRO-01 | 3 |
