@@ -14,6 +14,23 @@
 2. Agent can accept stack traces/logs as input (file or pasted text)
 3. CLI interface exists for running the agent
 
+**Plans (4 in 3 waves):**
+
+**Wave 1 *(foundation)* — Plan 01-01**
+- Project scaffold, pyproject.toml, Pydantic models (RepoInfo, TraceInfo, ConfigEnv, ContextDocument), config/settings, test infrastructure
+
+**Wave 2 *(parallel — context builder + MCP server)* — Plans 01-02, 01-04**
+- 01-02: RepoScanner (pathlib + .gitignore), TraceParser (regex), 7 unit tests
+- 01-04: FastMCP server, code search tool (rg + Python fallback), 3 tool stubs
+
+**Wave 3 *(CLI integration)* — Plan 01-03**
+- Typer app, diagnose command, Rich output, three input methods, visual verify checkpoint
+
+**Cross-cutting constraints:**
+- `print()` must never be used in MCP tools — use `ctx.info()` or `stderr`
+- No SSH/remote support (Phase 4)
+- Code search restricted to `.py` files in Phase 1
+
 ---
 
 ## Phase 2: Diagnosis Engine

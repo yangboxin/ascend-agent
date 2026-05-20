@@ -10,16 +10,16 @@ See: .planning/PROJECT.md (updated 2025-05-20)
 ## Current Position
 
 Phase: 1 of 5 (Architecture Foundation)
-Plan: 0 of 0 in current phase
-Status: Ready to plan
-Last activity: 2026-05-20 — Phase 1 context gathered
+Plan: 4 plans in 3 waves
+Status: Ready to execute
+Last activity: 2026-05-20 — Phase 1 planned
 
-Progress: [                    ] 0%
+Progress: [████                ] 20%
 
 ## Performance Metrics
 
 **Velocity:**
-- Total plans completed: 0
+- Total plans completed: 4
 - Average duration: N/A
 - Total execution time: 0 hours
 
@@ -34,6 +34,15 @@ Recent decisions affecting current work:
 - Phase 1: MCP-based tool layer with code search tool implemented
 - Phase 1: Pydantic context schema with repo+trace+config
 
+### Plans Created
+
+| Plan | Objective | Wave | Tasks | Autonomous |
+|------|-----------|------|-------|------------|
+| 01-01 | Project scaffold, Pydantic models, test infra | 1 | 3 | ✅ |
+| 01-02 | RepoScanner + TraceParser + 7 unit tests | 2 | 3 | ✅ |
+| 01-04 | FastMCP server + code search tool + 3 stubs | 2 | 3 | ✅ |
+| 01-03 | Typer CLI + diagnose command + Rich output | 3 | 3 | ❌ (checkpoint) |
+
 ### Pending Todos
 
 None yet.
@@ -45,5 +54,5 @@ None yet.
 ## Session Continuity
 
 Last session: 2026-05-20
-Stopped at: Phase 1 context gathered
-Resume file: .planning/phases/01-architecture-foundation/01-CONTEXT.md
+Stopped at: Phase 1 planned
+Resume file: .planning/phases/01-architecture-foundation/01-01-PLAN.md
