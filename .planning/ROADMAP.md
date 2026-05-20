@@ -16,7 +16,7 @@
 
 **Plans (4 in 3 waves):**
 
-**Wave 1 *(foundation)* — Plan 01-01**
+**Wave 1 *(foundation)* — Plan 01-01** ✅
 - Project scaffold, pyproject.toml, Pydantic models (RepoInfo, TraceInfo, ConfigEnv, ContextDocument), config/settings, test infrastructure
 
 **Wave 2 *(parallel — context builder + MCP server)* — Plans 01-02, 01-04**
