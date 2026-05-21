@@ -50,8 +50,9 @@
 
 **Plans (3 in 3 waves):**
 
-**Wave 1 *(foundation)* — Plan 02-01** ⬜
-- Pydantic models (Hypothesis, Evidence, SearchDecision, DiagnosisResult), ModelRouter abstraction (OpenAI client wrapper), Wave 0 test infrastructure
+**Wave 1 *(foundation)* — Plan 02-01** ✅
+- Pydantic models (Hypothesis, Evidence, SearchDecision, DiagnosisResult), ModelRouter abstraction (OpenAI client wrapper), Wave 0 test infrastructure ✅
+- Key deliverables: `src/ascend_agent/diagnosis/` package with 6 models + ModelRouter + 10 tests
 
 **Wave 2 *(engine core)* — Plan 02-02** ⬜
 - Engine class with LLM-driven search loop (max 3 iterations), AST-based function body extraction utility, engine unit tests
