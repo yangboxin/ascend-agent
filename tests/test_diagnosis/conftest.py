@@ -1,7 +1,21 @@
+import logging
 from pathlib import Path
 
 import pytest
 from unittest.mock import Mock
+
+from ascend_agent.context.models import (
+    ConfigEnv,
+    ContextDocument,
+    RepoInfo,
+    TraceInfo,
+)
+from ascend_agent.context.trace import parse_stack_trace
+from ascend_agent.diagnosis.models import (
+    DiagnosisResult,
+    SearchAction,
+    SearchDecision,
+)
 
 
 @pytest.fixture(scope="session")
@@ -51,3 +65,31 @@ def mock_openai_response():
     mock_client = Mock()
     mock_client.chat.completions.parse.side_effect = _make_mock
     return mock_client
+
+
+@pytest.fixture(scope="function")
+def sample_context_doc(sample_trace: str) -> ContextDocument:
+    """Creates a ContextDocument with repo and trace fields populated."""
+    trace_info = parse_stack_trace(sample_trace)
+    repo_info = RepoInfo(
+        path="/tmp/test_repo",
+        language="python",
+        file_count=3,
+        structure=["main.py", "utils/__init__.py", "utils/helper.py"],
+    )
+    return ContextDocument(
+        repo=repo_info,
+        trace=trace_info,
+        config_env=ConfigEnv(),
+    )
+
+
+@pytest.fixture(scope="function")
+def mock_router() -> Mock:
+    """Returns a Mock that replaces ModelRouter.
+
+    Tests set .completion.side_effect to control return values per call.
+    """
+    router = Mock()
+    router.completion = Mock()
+    return router
