@@ -12,7 +12,7 @@ from ascend_agent.context.models import ConfigEnv, ContextDocument
 from ascend_agent.context.repo import RepoScanner
 from ascend_agent.context.trace import trace_from_file, trace_from_stdin, trace_from_text
 from ascend_agent.diagnosis.engine import Engine
-from ascend_agent.diagnosis.models import DiagnosisResult, Hypothesis, Evidence, PartialFailure
+from ascend_agent.diagnosis.models import DiagnosisOutput, DiagnosisResult, Hypothesis, Evidence, PartialFailure
 from ascend_agent.diagnosis.router import ModelRouter
 
 console = Console()
@@ -83,8 +83,9 @@ def _one_shot_mode(
         raise typer.Exit(code=1)
 
     if output_path is not None:
+        output_wrapper = DiagnosisOutput(context_doc=doc, diagnosis_result=result)
         with open(output_path, "w") as f:
-            f.write(doc.model_dump_json(indent=2))
+            f.write(output_wrapper.model_dump_json(indent=2))
 
 
 def _repl_mode(repo: str):

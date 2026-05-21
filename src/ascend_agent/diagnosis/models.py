@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -73,3 +75,78 @@ class DiagnosisResult(BaseModel):
     iterations_used: int = Field(
         default=0, ge=0, le=3, description="Number of search iterations actually used"
     )
+
+
+class Replacement(BaseModel):
+    """A single search-and-replace operation on a file."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    file_path: str = Field(description="Repo-relative path to the file being edited")
+    old_text: str = Field(
+        description="Exact text to find in the file. Must match uniquely."
+    )
+    new_text: str = Field(description="Text to replace old_text with")
+
+
+class FixResponse(BaseModel):
+    """Structured output from the LLM for a single hypothesis fix."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    explanation: str = Field(
+        description="Clear explanation of what the fix does and why it addresses the root cause"
+    )
+    replacements: list[Replacement] = Field(
+        description="One or more search-and-replace operations to fix the issue. "
+        "Multiple replacements in the same file are allowed."
+    )
+
+
+class FixSuggestion(BaseModel):
+    """A single fix suggestion for one file."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    file_path: str = Field(
+        description="Repo-relative path to the file that needs modification"
+    )
+    diff_patch: str = Field(
+        description="Unified diff patch showing the changes (computed by FixEngine from replacements)"
+    )
+    explanation: str = Field(
+        description="Human-readable explanation of what the fix does and why"
+    )
+    hypothesis_id: int = Field(
+        description="Index of the hypothesis this fix addresses (0-based)"
+    )
+    replacements: list[Replacement] = Field(
+        description="The search-and-replace operations that produce this diff"
+    )
+
+
+class FixGenerationResult(BaseModel):
+    """Result of the fix generation process."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    suggestions: list[FixSuggestion] = Field(
+        default_factory=list, description="Generated fix suggestions"
+    )
+    errors: list[PartialFailure] = Field(
+        default_factory=list, description="Partial failures during fix generation"
+    )
+    total_hypotheses: int = Field(
+        default=0, description="Total number of hypotheses processed"
+    )
+
+
+class DiagnosisOutput(BaseModel):
+    """Wrapper for diagnosis output combining context document and diagnosis result."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    context_doc: "ContextDocument" = Field(
+        description="The context document with repo, trace, and config information"
+    )
+    diagnosis_result: DiagnosisResult = Field(description="The diagnosis result")
