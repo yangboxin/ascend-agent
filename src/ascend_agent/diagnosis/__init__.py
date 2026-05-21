@@ -1,3 +1,4 @@
+from ascend_agent.diagnosis.engine import Engine, _read_function_body
 from ascend_agent.diagnosis.models import (
     DiagnosisResult,
     Evidence,
@@ -9,7 +10,9 @@ from ascend_agent.diagnosis.models import (
 from ascend_agent.diagnosis.router import ModelRouter
 
 __all__ = [
+    "_read_function_body",
     "DiagnosisResult",
+    "Engine",
     "Evidence",
     "Hypothesis",
     "ModelRouter",
