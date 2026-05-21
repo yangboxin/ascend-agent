@@ -1,5 +1,8 @@
+import asyncio
 import json
 import os
+from collections import defaultdict
+from pathlib import Path
 import sys
 
 import typer
@@ -11,6 +14,7 @@ from rich.syntax import Syntax
 from ascend_agent.diagnosis.fix_engine import FixEngine
 from ascend_agent.diagnosis.models import DiagnosisOutput, FixSuggestion, FixGenerationResult, PartialFailure
 from ascend_agent.diagnosis.router import ModelRouter
+from ascend_agent.tools.file_edit import edit_file
 
 console = Console()
 fix_app = typer.Typer(name="fix", help="Generate fixes based on diagnosis findings")
@@ -101,23 +105,112 @@ def _display_fix_summary(result: FixGenerationResult):
 
 
 def _run_review_workflow(suggestions: list[FixSuggestion], repo_path: str) -> list[FixSuggestion]:
-    """[STUB — Phase 3 Task 2] Sequential review workflow.
+    """Sequential review workflow (D-09 through D-11).
 
     Shows each fix suggestion one at a time with Rich Panel + Syntax diff,
     prompts Accept/Skip/Reject, returns list of accepted fixes.
     """
-    ...
+    accepted: list[FixSuggestion] = []
+    total = len(suggestions)
+
+    if total == 0:
+        return accepted
+
+    for idx, suggestion in enumerate(suggestions, 1):
+        # Header
+        console.print(
+            f"\n[bold cyan]Fix {idx}/{total}[/bold cyan]"
+            f" — [bold]{suggestion.file_path}[/bold]"
+        )
+
+        # Explanation
+        console.print(f"\n[bold]Explanation:[/bold] {suggestion.explanation}")
+
+        # Diff display (D-11: Rich Panel + Syntax with "diff" lexer)
+        diff_syntax = Syntax(
+            suggestion.diff_patch,
+            "diff",
+            theme="monokai",
+            line_numbers=True,
+        )
+        console.print(Panel(
+            diff_syntax,
+            title=f"Suggested Changes — {suggestion.file_path}",
+            border_style="blue",
+        ))
+
+        # Prompt (D-10: Accept / Skip / Reject)
+        action = Prompt.ask(
+            "[bold]Action[/bold] ([green]A[/green]ccept / [yellow]S[/yellow]kip / [red]R[/red]eject)",
+            choices=["a", "s", "r"],
+            default="s",
+        )
+
+        if action == "a":
+            accepted.append(suggestion)
+            console.print("[green]✓ Accepted[/green]")
+        elif action == "s":
+            console.print("[yellow]→ Skipped[/yellow]")
+        elif action == "r":
+            console.print("[red]✗ Rejected[/red]")
+
+        console.print()  # blank line for spacing
+
+    return accepted
 
 
 def _apply_fixes_batch(accepted: list[FixSuggestion], repo_path: str) -> dict:
-    """[STUB — Phase 3 Task 2] Batch apply accepted fixes.
+    """Batch apply accepted fixes (D-12).
 
-    Groups fixes by file_path, collapses replacements per file,
-    calls edit_file for each group, returns apply summary.
+    Groups accepted FixSuggestions by file_path (Pitfall 5 mitigation),
+    collapses all replacements per file, calls edit_file for each group.
     """
-    ...
+    console.print("\n[bold cyan]Applying accepted fixes...[/bold cyan]")
+
+    # Group by file_path (Pitfall 5 mitigation)
+    by_file: dict[str, list[dict]] = defaultdict(list)
+    for suggestion in accepted:
+        for replacement in suggestion.replacements:
+            by_file[suggestion.file_path].append(
+                {"old_text": replacement.old_text, "new_text": replacement.new_text}
+            )
+
+    applied = 0
+    failed = 0
+
+    for file_path, ops_dicts in by_file.items():
+        resolved_path = Path(repo_path) / file_path
+
+        try:
+            result_str = asyncio.run(edit_file(
+                file_path=str(resolved_path),
+                operations=ops_dicts,
+                repo_path=repo_path,
+            ))
+            result = json.loads(result_str)
+            if result.get("status") == "ok":
+                console.print(f"[green]  ✓ {file_path}[/green]")
+                applied += 1
+            else:
+                console.print(f"[red]  ✗ {file_path}: {result.get('error', 'unknown error')}[/red]")
+                failed += 1
+        except Exception as e:
+            console.print(f"[red]  ✗ {file_path}: {e}[/red]")
+            failed += 1
+
+    # Summary
+    if failed > 0:
+        console.print(f"\n[bold green]Applied {applied} file(s)[/bold green]"
+                      f"  [bold red]Failed: {failed}[/bold red]")
+    else:
+        console.print(f"\n[bold green]Applied {applied} file(s)[/bold green]")
+
+    return {"applied": applied, "failed": failed}
 
 
 def _save_fixes_output(accepted: list[FixSuggestion], output_path: str):
-    """[STUB — Phase 3 Task 2] Save accepted fixes to JSON file."""
-    ...
+    """Save accepted fixes to JSON file (D-19)."""
+    accepted_list = [s.model_dump() for s in accepted]
+    with open(output_path, "w") as f:
+        json.dump(accepted_list, f, indent=2)
+    console.print(f"[green]✓ Saved accepted fixes to {output_path}[/green]")
