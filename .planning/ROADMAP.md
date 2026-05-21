@@ -6,7 +6,7 @@
 
 ## Phase 1: Architecture Foundation ✅
 **Goal:** Build the core infrastructure layers — CLI interaction, context builder, and tool layer foundation.
-**Completed:** 2026-05-20
+**Completed:** 2026-05-21
 
 **Requirements:** ARCH-01, ARCH-02
 
@@ -15,7 +15,7 @@
 2. ✅ Agent can accept stack traces/logs as input (file or pasted text)
 3. ✅ CLI interface exists for running the agent
 
-**Plans (4 in 3 waves):**
+**Plans (5 in 4 waves):**
 
 **Wave 1 *(foundation)* — Plan 01-01** ✅
 - Project scaffold, pyproject.toml, Pydantic models (RepoInfo, TraceInfo, ConfigEnv, ContextDocument), config/settings, test infrastructure
@@ -27,10 +27,14 @@
 **Wave 3 *(CLI integration)* — Plan 01-03** ✅
 - Typer app, diagnose command, Rich output, three input methods, visual verify checkpoint ✅
 
+**Wave 4 *(UAT gap closure)* — Plan 01-05** ✅
+- CLI no-args shows full help (ctx.get_help()), MCP server stderr startup banner, code_search tool name correction
+
 **Cross-cutting constraints:**
 - `print()` must never be used in MCP tools — use `ctx.info()` or `stderr`
 - No SSH/remote support (Phase 4)
 - Code search restricted to `.py` files in Phase 1
+- MCP server startup message goes to stderr exclusively (stdout is JSON-RPC transport)
 
 ---
 
@@ -43,6 +47,23 @@
 1. Agent parses stack traces and extracts error locations
 2. Agent searches codebase to find relevant source files
 3. Agent proposes hypotheses with evidence (code snippets, line numbers)
+
+**Plans (3 in 3 waves):**
+
+**Wave 1 *(foundation)* — Plan 02-01** ⬜
+- Pydantic models (Hypothesis, Evidence, SearchDecision, DiagnosisResult), ModelRouter abstraction (OpenAI client wrapper), Wave 0 test infrastructure
+
+**Wave 2 *(engine core)* — Plan 02-02** ⬜
+- Engine class with LLM-driven search loop (max 3 iterations), AST-based function body extraction utility, engine unit tests
+
+**Wave 3 *(CLI integration)* — Plan 02-03** ⬜
+- Wire Engine into `diagnose run` command, Rich-formatted diagnosis result display, CLI integration tests, human-verify checkpoint
+
+**Cross-cutting constraints:**
+- `openai` SDK >=2.37.0 for LLM calls with structured outputs
+- Model router configured via `ASCEND_DIAGNOSIS_MODEL` env var (default `gpt-4o`)
+- No cross-reference following, no error categorization (Phase 2 scope)
+- Engine is silent — no clarifying questions
 
 ---
 
