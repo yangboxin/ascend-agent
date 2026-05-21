@@ -38,15 +38,16 @@
 
 ---
 
-## Phase 2: Diagnosis Engine
+## Phase 2: Diagnosis Engine ✅
 **Goal:** Implement the core diagnosis capability — analyze stack traces, locate source code, generate hypotheses.
+**Completed:** 2026-05-21
 
 **Requirements:** DIAG-01, DIAG-02
 
 **Success Criteria:**
-1. Agent parses stack traces and extracts error locations
-2. Agent searches codebase to find relevant source files
-3. Agent proposes hypotheses with evidence (code snippets, line numbers)
+1. ✅ Agent parses stack traces and extracts error locations (TraceParser — Phase 1)
+2. ✅ Agent searches codebase to find relevant source files (Engine + code_search — Phase 2)
+3. ✅ Agent proposes hypotheses with evidence (code snippets, line numbers) (Engine.diagnose + Rich display — Phase 2)
 
 **Plans (3 in 3 waves):**
 
@@ -57,9 +58,9 @@
 **Wave 2 *(engine core)* — Plan 02-02** ✅
 - Engine class with LLM-driven search loop (max 3 iterations), AST-based function body extraction utility, engine unit tests ✅
 
-**Wave 3 *(CLI integration)* — Plan 02-03** ◐ (checkpoint)
+**Wave 3 *(CLI integration)* — Plan 02-03** ✅
 - Wire Engine into `diagnose run` command, Rich-formatted diagnosis result display, CLI integration tests, human-verify checkpoint ✅
-- Implementation complete, awaiting human-verify approval
+- Implementation complete, human-verify approved ✅
 
 **Cross-cutting constraints:**
 - `openai` SDK >=2.37.0 for LLM calls with structured outputs
@@ -110,12 +111,12 @@
 | Phase | Name | Requirements | Success Criteria |
 |-------|------|--------------|------------------|
 | 1 | Architecture Foundation ✅ | ARCH-01, ARCH-02 | 3 ✓ |
-| 2 | Diagnosis Engine | DIAG-01, DIAG-02 | 3 |
+| 2 | Diagnosis Engine ✅ | DIAG-01, DIAG-02 | 3 ✓ |
 | 3 | Fix Generation | FIX-01, FIX-02 | 3 |
 | 4 | Reproduction Capability | REPRO-01 | 3 |
 | 5 | Verification &闭环 | VERIF-01, VERIF-02 | 3 |
 
-**Total: 5 phases | 9 requirements | 15 success criteria**
+**Total: 5 phases (2 complete) | 9 requirements | 15 success criteria**
 
 ---
 
