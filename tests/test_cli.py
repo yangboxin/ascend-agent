@@ -76,3 +76,124 @@ def test_cli_diagnose_integration(tmp_path, monkeypatch):
     assert "Mock root cause" in result.stdout
     assert "Confidence: 85%" in result.stdout
     assert "iterations used: 2" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Fix CLI tests
+# ---------------------------------------------------------------------------
+
+
+def _write_diagnosis_json(tmp_path) -> str:
+    """Write a minimal valid DiagnosisOutput JSON and return the file path."""
+    import json
+
+    data = {
+        "context_doc": {
+            "repo": {"path": str(tmp_path), "language": "python", "file_count": 0, "structure": []},
+            "trace": None,
+            "config_env": {"python_version": "3.10", "platform": "linux", "env_vars": {}},
+        },
+        "diagnosis_result": {"hypotheses": [], "errors": [], "iterations_used": 0},
+    }
+    path = tmp_path / "diagnosis.json"
+    path.write_text(json.dumps(data))
+    return str(path)
+
+
+def test_fix_run_reads_diagnosis_json(tmp_path, monkeypatch):
+    """Fix run reads diagnosis JSON from file and displays summary."""
+    from unittest.mock import Mock
+
+    diagnosis_path = _write_diagnosis_json(tmp_path)
+
+    mock_engine = Mock()
+    mock_engine.generate_fixes.return_value = Mock(
+        suggestions=[], errors=[], total_hypotheses=0
+    )
+    import ascend_agent.cli.fix as fix_mod
+    monkeypatch.setattr(fix_mod, "FixEngine", lambda *args, **kwargs: mock_engine)
+    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
+
+    result = runner.invoke(app, ["fix", "run", diagnosis_path])
+    assert result.exit_code == 0
+    assert "Fix Generation Complete" in result.stdout
+    assert "No fix suggestions" in result.stdout
+
+
+def test_fix_run_generates_suggestions(tmp_path, monkeypatch):
+    """Fix run generates suggestions and displays them."""
+    from unittest.mock import Mock
+    import ascend_agent.cli.fix as fix_mod
+    from ascend_agent.diagnosis.models import FixSuggestion, FixGenerationResult, Replacement
+
+    diagnosis_path = _write_diagnosis_json(tmp_path)
+    # Create the target file so batch apply can succeed
+    (tmp_path / "test.py").write_text("x = 1\n")
+
+    mock_result = FixGenerationResult(
+        suggestions=[
+            FixSuggestion(
+                file_path="test.py",
+                diff_patch="--- test.py\n+++ test.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n",
+                explanation="Fix the value",
+                hypothesis_id=0,
+                replacements=[
+                    Replacement(file_path="test.py", old_text="x = 1\n", new_text="x = 2\n")
+                ],
+            )
+        ],
+        errors=[],
+        total_hypotheses=1,
+    )
+
+    mock_engine = Mock()
+    mock_engine.generate_fixes.return_value = mock_result
+
+    monkeypatch.setattr(fix_mod, "FixEngine", lambda *args, **kwargs: mock_engine)
+    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
+    monkeypatch.setattr(fix_mod, "_run_review_workflow", lambda *args, **kwargs: list(args[0]) if args else [])
+
+    result = runner.invoke(app, ["fix", "run", diagnosis_path])
+    assert result.exit_code == 0
+    assert "test.py" in result.stdout
+    assert "1 fix suggestions" in result.stdout
+    assert "Applied 1 file(s)" in result.stdout
+
+
+def test_fix_run_stdin_input(tmp_path, monkeypatch):
+    """Fix run reads diagnosis JSON from stdin when no file arg provided."""
+    import json
+    from unittest.mock import Mock
+
+    data = {
+        "context_doc": {
+            "repo": {"path": str(tmp_path), "language": "python", "file_count": 0, "structure": []},
+            "trace": None,
+            "config_env": {"python_version": "3.10", "platform": "linux", "env_vars": {}},
+        },
+        "diagnosis_result": {"hypotheses": [], "errors": [], "iterations_used": 0},
+    }
+
+    mock_engine = Mock()
+    mock_engine.generate_fixes.return_value = Mock(
+        suggestions=[], errors=[], total_hypotheses=0
+    )
+    import ascend_agent.cli.fix as fix_mod
+    monkeypatch.setattr(fix_mod, "FixEngine", lambda *args, **kwargs: mock_engine)
+    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
+
+    result = runner.invoke(app, ["fix", "run"], input=json.dumps(data))
+    assert result.exit_code == 0
+    assert "Fix Generation Complete" in result.stdout
+
+
+def test_fix_run_missing_api_key(tmp_path, monkeypatch):
+    """Fix run exits with code 1 when API key is missing."""
+    diagnosis_path = _write_diagnosis_json(tmp_path)
+
+    # Remove API key so ModelRouter raises ValueError
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    result = runner.invoke(app, ["fix", "run", diagnosis_path])
+    assert result.exit_code == 1
+    assert "OPENAI_API_KEY" in result.stdout
