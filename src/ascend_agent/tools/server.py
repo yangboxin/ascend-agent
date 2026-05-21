@@ -9,7 +9,7 @@ from ascend_agent.tools.test_runner import run_test
 
 mcp = FastMCP("ascend-agent-tools")
 
-mcp.tool(name="search_code", description="Search for a regex pattern in Python files in the codebase")(search_code)
+mcp.tool(name="code_search", description="Search for a regex pattern in Python files in the codebase")(search_code)
 mcp.tool(name="edit_file", description="[STUB] Edit a file in the codebase — implemented in Phase 3")(edit_file)
 mcp.tool(name="exec_shell", description="[STUB] Execute a shell command — implemented in Phase 4")(exec_shell)
 mcp.tool(name="run_test", description="[STUB] Run a test command — implemented in Phase 5")(run_test)

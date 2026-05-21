@@ -4,7 +4,7 @@ from ascend_agent.tools.server import mcp
 def test_mcp_server_lists_tools():
     tools = mcp._tool_manager.list_tools()
     names = [t.name for t in tools]
-    assert "search_code" in names
+    assert "code_search" in names
     assert "edit_file" in names
     assert "exec_shell" in names
     assert "run_test" in names
