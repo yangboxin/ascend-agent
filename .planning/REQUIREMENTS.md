@@ -15,7 +15,7 @@ Requirements for initial release. Each maps to roadmap phases.
 ### Diagnosis
 
 - [x] **DIAG-01**: Agent can analyze stack traces to identify root cause and propose hypotheses with evidence
-- [ ] **DIAG-02**: Agent can locate relevant source code from stack trace information
+- [x] **DIAG-02**: Agent can locate relevant source code from stack trace information
 
 ### Fixes
 
@@ -55,8 +55,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | ARCH-01 | Phase 1 | Verified ✓ |
 | ARCH-02 | Phase 1 | Verified ✓ |
-| DIAG-01 | Phase 2 | Wave 1 ✓ |
-| DIAG-02 | Phase 2 | Pending |
+| DIAG-01 | Phase 2 | Wave 1 ✓, Wave 2 ✓ |
+| DIAG-02 | Phase 2 | Wave 2 ✓ |
 | FIX-01 | Phase 3 | Pending |
 | FIX-02 | Phase 3 | Pending |
 | REPRO-01 | Phase 4 | Pending |
