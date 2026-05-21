@@ -57,8 +57,9 @@
 **Wave 2 *(engine core)* — Plan 02-02** ✅
 - Engine class with LLM-driven search loop (max 3 iterations), AST-based function body extraction utility, engine unit tests ✅
 
-**Wave 3 *(CLI integration)* — Plan 02-03** ⬜
-- Wire Engine into `diagnose run` command, Rich-formatted diagnosis result display, CLI integration tests, human-verify checkpoint
+**Wave 3 *(CLI integration)* — Plan 02-03** ◐ (checkpoint)
+- Wire Engine into `diagnose run` command, Rich-formatted diagnosis result display, CLI integration tests, human-verify checkpoint ✅
+- Implementation complete, awaiting human-verify approval
 
 **Cross-cutting constraints:**
 - `openai` SDK >=2.37.0 for LLM calls with structured outputs
