@@ -2,7 +2,7 @@ import json
 import sys
 
 import typer
-from rich.console import Console
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
@@ -11,6 +11,9 @@ from ascend_agent.config import settings
 from ascend_agent.context.models import ConfigEnv, ContextDocument
 from ascend_agent.context.repo import RepoScanner
 from ascend_agent.context.trace import trace_from_file, trace_from_stdin, trace_from_text
+from ascend_agent.diagnosis.engine import Engine
+from ascend_agent.diagnosis.models import DiagnosisResult, Hypothesis, Evidence, PartialFailure
+from ascend_agent.diagnosis.router import ModelRouter
 
 console = Console()
 diagnose_app = typer.Typer(name="diagnose", help="Diagnose an issue from a stack trace against a code repository")
@@ -67,6 +70,17 @@ def _one_shot_mode(
     doc = ContextDocument(repo=repo_info, trace=trace_info, config_env=config_env)
 
     _display_context(doc)
+
+    console.print("\n[bold cyan]Running diagnosis...[/bold cyan]")
+    try:
+        router = ModelRouter()
+        engine = Engine(router=router, repo_path=repo)
+        result = engine.diagnose(doc)
+        _display_diagnosis(result)
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        console.print("[yellow]Hint: Set the OPENAI_API_KEY environment variable to use the diagnosis engine.[/yellow]")
+        raise typer.Exit(code=1)
 
     if output_path is not None:
         with open(output_path, "w") as f:
@@ -144,3 +158,36 @@ def _display_context(doc: ContextDocument):
             console.print(f"  [dim]{frame.file}:{frame.line}[/dim] [yellow]{frame.function}[/yellow]")
 
     console.print(f"\n[dim]Environment: Python {doc.config_env.python_version[:6]} on {doc.config_env.platform}[/dim]")
+
+
+def _display_diagnosis(result: DiagnosisResult):
+    console.print("\n[bold]Diagnosis Results[/bold]")
+    console.print(f"[cyan]Search iterations used: {result.iterations_used}/3[/cyan]")
+
+    if result.errors:
+        error_text = "\n".join(
+            f"[red]{e.stage}:[/red] {e.reason}" + (f"\n[dim]{e.details}[/dim]" if e.details else "")
+            for e in result.errors
+        )
+        console.print(Panel(error_text, title="Partial Failures", border_style="red"))
+
+    if not result.hypotheses:
+        console.print("[yellow]No hypotheses could be generated.[/yellow]")
+        if result.errors:
+            console.print("[dim]See Partial Failures above for details.[/dim]")
+    else:
+        for i, hyp in enumerate(result.hypotheses, 1):
+            border = "green" if hyp.confidence >= 0.7 else ("yellow" if hyp.confidence >= 0.4 else "red")
+            panel = Panel(
+                "",
+                title=f"Hypothesis #{i} — Confidence: {hyp.confidence:.0%}",
+                border_style=border,
+            )
+            console.print(panel)
+            console.print(f"[bold]Root Cause:[/bold] {hyp.root_cause}")
+            for ev in hyp.evidence:
+                console.print(f"[blue]File: {ev.file_path}:{ev.line_number}[/blue]")
+                console.print(Syntax(ev.code_snippet, "python", theme="monokai", line_numbers=True))
+                console.print(f"[italic]{ev.relevance}[/italic]")
+
+    console.print("\n[dim]Diagnosis complete.[/dim]")
