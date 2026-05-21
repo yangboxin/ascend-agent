@@ -171,27 +171,24 @@ class FixEngine:
             return None
 
         # Step 2: LLM generates fix
-        try:
-            llm_response: FixResponse = self._router.completion(
-                messages=[
-                    {"role": "system", "content": _FIX_SYSTEM_PROMPT},
-                    {
-                        "role": "user",
-                        "content": _build_fix_user_prompt(
-                            hypothesis=hypothesis,
-                            code_context=code_context,
-                        ),
-                    },
-                ],
-                response_model=FixResponse,
-                max_tokens=4096,
-                temperature=0.1,
-            )
-        except Exception as exc:
-            logger.warning(
-                "LLM call failed for hypothesis %d: %s", hypothesis_id, exc
-            )
-            return None
+        # NOTE: Do NOT catch exceptions here — let them propagate to
+        # generate_fixes() which wraps each hypothesis iteration in
+        # try/except and records PartialFailure (per engine.py pattern).
+        llm_response: FixResponse = self._router.completion(
+            messages=[
+                {"role": "system", "content": _FIX_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": _build_fix_user_prompt(
+                        hypothesis=hypothesis,
+                        code_context=code_context,
+                    ),
+                },
+            ],
+            response_model=FixResponse,
+            max_tokens=4096,
+            temperature=0.1,
+        )
 
         # Step 3: Validate replacements
         valid_replacements: list[Replacement] = []

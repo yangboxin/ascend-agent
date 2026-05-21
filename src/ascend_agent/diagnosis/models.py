@@ -150,3 +150,14 @@ class DiagnosisOutput(BaseModel):
         description="The context document with repo, trace, and config information"
     )
     diagnosis_result: DiagnosisResult = Field(description="The diagnosis result")
+
+
+# Resolve forward reference for ContextDocument at runtime.
+# Import is deferred to avoid circular imports.
+def _rebuild_diagnosis_output():
+    from ascend_agent.context.models import ContextDocument  # noqa: F811
+
+    DiagnosisOutput.model_rebuild()
+
+
+_rebuild_diagnosis_output()

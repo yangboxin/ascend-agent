@@ -568,27 +568,27 @@ def read_function_body(file_path: str, target_line: int, context_lines: int = 5)
 | A4 | The `code_search` tool's interface (`search_code(pattern, path)`) is sufficient for the LLM search strategy | Architecture | The LLM may need to search with context (e.g., "find function definition of X in file Y"). If the tool doesn't support file-scoped search, the LLM may get too many results. The `code_search` tool accepts any `path`, so the engine can restrict to specific subdirectories. |
 | A5 | The diagnosis engine can be synchronous (not async) inside the CLI command | Architecture | If the LLM call takes > 30 seconds (large model, many iterations), a synchronous call will block the CLI. The existing code uses `asyncio.run()` for tool calls. Consider making `Engine.diagnose()` async if latency is a concern. |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **Which model should the Model Router use by default?**
+   - RESOLVED: Default to `gpt-4o` for quality. Configure via `ASCEND_DIAGNOSIS_MODEL` env var. Document that gpt-4o-mini is an alternative for cost-sensitive or quick diagnoses. The model choice remains in the agent's discretion area.
    - What we know: gpt-4o supports structured outputs, is widely available, and has good code analysis capabilities. gpt-4o-mini is cheaper but may produce lower quality diagnosis. The model choice is in the agent's discretion area.
    - What's unclear: Whether the team has API access to specific models, whether they want a local model, and whether cost or quality is the priority.
-   - Recommendation: Default to `gpt-4o` for quality. Configure via `ASCEND_DIAGNOSIS_MODEL` env var. Document that gpt-4o-mini is an alternative for cost-sensitive or quick diagnoses.
 
 2. **Should the `search_code` tool be called via the MCP server transport or as a direct Python function call?**
+   - RESOLVED: Call `search_code` directly as an async function. No need to start the MCP server during CLI diagnosis. This keeps the architecture simple and avoids the `asyncio.run()` nesting issues that could arise from running a server and calling the tool.
    - What we know: The MCP server runs on STDIO transport. The CLI command already runs in a Python process. Calling the tool directly as an async function (`await search_code(...)`) is simpler and avoids starting a separate MCP server.
    - What's unclear: The `search_code` function is designed for MCP tool context (accepts `ctx: Context | None`). As a direct call, `ctx` would be `None`, which is already handled.
-   - Recommendation: Call `search_code` directly as an async function. No need to start the MCP server during CLI diagnosis. This keeps the architecture simple and avoids the `asyncio.run()` nesting issues that could arise from running a server and calling the tool.
 
 3. **How should code snippet extraction handle files outside the repo?**
+   - RESOLVED: Skip frames where the file path doesn't exist in the repo. Log a warning and continue. The partial results pattern (D-04) can note this. Per D-10, the LLM decides which frames to search — it may choose to skip or pursue based on file paths.
    - What we know: Stack trace frames may reference files in site-packages, stdlib, or other non-repo paths. D-09/D-11 only specify reading scope, not what to do when the file doesn't exist in the repo.
    - What's unclear: Should the engine skip non-repo frames? Try to find the file in site-packages?
-   - Recommendation: Skip frames where the file path doesn't exist in the repo. Log a warning and continue. The partial results pattern (D-04) can note this. Per D-10, the LLM decides which frames to search — it may choose to skip or pursue based on file paths.
 
 4. **How strict should the confidence score format be?**
+   - RESOLVED: Use relative confidence. Instruct the LLM to assign scores such that the ranking is meaningful. Absolute calibration is a future improvement when error categorization is added (VectorDB/RAG phase).
    - What we know: D-05 requires a confidence score. D-06 requires ranking by confidence. The `Hypothesis` model uses `float 0.0-1.0`.
    - What's unclear: Should confidence be calibrated (e.g., 0.9 = "almost certain") or relative (top is always the best guess)?
-   - Recommendation: Use relative confidence. Instruct the LLM to assign scores such that the ranking is meaningful. Absolute calibration is a future improvement when error categorization is added (VectorDB/RAG phase).
 
 ## Environment Availability
 
