@@ -72,6 +72,7 @@
 
 ## Phase 3: Fix Generation
 **Goal:** Generate code fixes based on diagnosis findings.
+**Status:** Planned — 3 plans in 2 waves
 
 **Requirements:** FIX-01, FIX-02
 
@@ -79,6 +80,21 @@
 1. Agent generates fix suggestions based on diagnosis
 2. Agent presents fixes for human review (not auto-apply)
 3. Agent can explain the reasoning behind each fix
+
+**Plans (3 in 2 waves):**
+
+**Wave 1 *(parallel)* — Plans 03-01, 03-03**
+- 03-01: Pydantic models (FixSuggestion, FixGenerationResult, FixResponse, DiagnosisOutput), FixEngine class with multi-turn LLM strategy, `diagnose.py --output` update, Wave 0 test infrastructure
+- 03-03: edit_file MCP tool with search-and-replace, .bak backup, atomic multi-replacement validation
+
+**Wave 2 *(blocked on Wave 1)* — Plan 03-02**
+- 03-02: `fix run` CLI (file/stdin), sequential human review workflow (Accept/Skip/Reject), batch application, `--output` audit file, CLI integration tests
+
+**Cross-cutting constraints:**
+- All fixes reviewed by human before application (no auto-apply)
+- edit_file blocks path traversal — `file_path` must resolve within repo
+- FixEngine reuses ModelRouter from Phase 2 with `ASCEND_FIX_MODEL` env var (default `gpt-4o`)
+- Fixes use search-and-replace internally; unified diff computed via `difflib.unified_diff()` for display
 
 ---
 
@@ -112,11 +128,11 @@
 |-------|------|--------------|------------------|
 | 1 | Architecture Foundation ✅ | ARCH-01, ARCH-02 | 3 ✓ |
 | 2 | Diagnosis Engine ✅ | DIAG-01, DIAG-02 | 3 ✓ |
-| 3 | Fix Generation | FIX-01, FIX-02 | 3 |
+| 3 | Fix Generation ◆ | FIX-01, FIX-02 | 3 (planned) |
 | 4 | Reproduction Capability | REPRO-01 | 3 |
 | 5 | Verification &闭环 | VERIF-01, VERIF-02 | 3 |
 
-**Total: 5 phases (2 complete) | 9 requirements | 15 success criteria**
+**Total: 5 phases (2 complete, 1 planned) | 9 requirements | 15 success criteria**
 
 ---
 

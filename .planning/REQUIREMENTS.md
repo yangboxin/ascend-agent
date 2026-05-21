@@ -57,8 +57,8 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ARCH-02 | Phase 1 | Verified ✓ |
 | DIAG-01 | Phase 2 | Wave 1 ✓, Wave 2 ✓ |
 | DIAG-02 | Phase 2 | Wave 2 ✓ |
-| FIX-01 | Phase 3 | Pending |
-| FIX-02 | Phase 3 | Pending |
+| FIX-01 | Phase 3 | Plan 03-01 ✓, Plan 03-02 ✓ |
+| FIX-02 | Phase 3 | Plan 03-02 ✓, Plan 03-03 ✓ |
 | REPRO-01 | Phase 4 | Pending |
 | VERIF-01 | Phase 5 | Pending |
 | VERIF-02 | Phase 5 | Pending |
