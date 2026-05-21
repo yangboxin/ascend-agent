@@ -8,8 +8,7 @@ app = typer.Typer(rich_markup_mode="rich", help="Ascend Diagnostic Agent — dia
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context):
     if ctx.invoked_subcommand is None:
-        console.print("[bold]Ascend Diagnostic Agent[/bold]")
-        console.print("Use [cyan]--help[/cyan] for available commands.")
+        console.print(ctx.get_help())
         raise typer.Exit()
 
 
