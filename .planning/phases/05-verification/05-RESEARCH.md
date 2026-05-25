@@ -470,22 +470,16 @@ def verify_run(
 | A3 | exec_shell runs test commands in the correct working directory (repo_path) | Architecture Patterns | MEDIUM — if exec_shell doesn't cd to repo_path, test discovery may fail; the ReproductionEngine pattern should include `cd {repo_path} && pytest ...` |
 | A4 | VerificationEngine is deterministic (no LLM needed) | Architecture Patterns | LOW — test execution + JSON parsing is purely mechanical; no LLM reasoning required |
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **Should the VerificationEngine constructor require ModelRouter?**
-   - What we know: All existing engines take `router: ModelRouter` in their constructor. If VerificationEngine is purely deterministic, it doesn't need an LLM.
-   - What's unclear: Whether to break the existing constructor pattern for consistency vs. remove unnecessary dependency.
-   - Recommendation: Accept `router` but don't use it (for interface consistency). Alternatively, accept `router | None = None` to signal that LLM is optional. Either approach is fine — this is the agent's discretion area.
+1. **Should the VerificationEngine constructor require ModelRouter?** [RESOLVED]
+   - Decision: Accept `router: ModelRouter` for interface consistency with all 4 prior engines but use purely deterministic logic internally — no LLM calls. Keeps the constructor pattern uniform.
+   
+2. **Should test timeout be a per-command value or a global setting?** [RESOLVED]
+   - Decision: Add `test_timeout: int = Field(default=300, ge=1)` to Settings class, following the existing `shell_timeout` pattern.
 
-2. **Should test timeout be a per-command value or a global setting?**
-   - What we know: `Settings.shell_timeout` defaults to 60s. Tests typically need longer than shell commands.
-   - What's unclear: Whether to add `test_timeout` to Settings or pass it as a method parameter.
-   - Recommendation: Add `test_timeout: int = Field(default=300, ge=1)` to Settings class. This is extensible and follows the existing pattern of `shell_timeout`.
-
-3. **What happens if `files_changed` is empty in ReproductionResult?**
-   - What we know: ReproductionResult can have `files_changed: []`. This could mean no files were changed during reproduction.
-   - What's unclear: Whether to skip verification entirely or run the full test suite in this case.
-   - Recommendation: Report `status: "no_tests"` with a clear message. Do not silently pass. The deferred `--full` flag is the future answer for this case.
+3. **What happens if `files_changed` is empty in ReproductionResult?** [RESOLVED]
+   - Decision: Report `status: "no_tests"` with a clear message. Do not silently pass. The deferred `--full` flag is the future answer for this case.
 
 ## Environment Availability
 

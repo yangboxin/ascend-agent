@@ -141,6 +141,47 @@ class FixGenerationResult(BaseModel):
     )
 
 
+class TestDetail(BaseModel):
+    """A single test result detail."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    nodeid: str = Field(description="Pytest node ID (e.g., tests/test_foo.py::test_bar)")
+    outcome: str = Field(description="Test outcome: passed, failed, error, skipped, xfailed, xpassed")
+    duration: float | None = Field(default=None, description="Test duration in seconds")
+    message: str | None = Field(default=None, description="Failure/error message if applicable")
+
+
+class VerificationResult(BaseModel):
+    """Structured result from verification execution (D-01 through D-04)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str = Field(
+        pattern=r"^(pass|fail|error|timeout|no_tests)$",
+        description="Overall verification status",
+    )
+    hypothesis_id_verified: int = Field(
+        description="Index of hypothesis this verification addresses",
+    )
+    framework: str | None = Field(default=None, description="Detected test framework (e.g., 'pytest') or None if not found")
+    command: str = Field(description="The test command that was executed")
+    summary: str = Field(description="Human-readable summary of verification results")
+    tests_found: int = Field(default=0, description="Number of test files mapped")
+    tests_run: int = Field(default=0, description="Number of tests actually executed")
+    passed: int = Field(default=0, description="Number of tests that passed")
+    failed: int = Field(default=0, description="Number of tests that failed")
+    errors: int = Field(default=0, description="Number of tests that errored")
+    skipped: int = Field(default=0, description="Number of tests skipped")
+    xfailed: int = Field(default=0, description="Number of expected failures")
+    xpassed: int = Field(default=0, description="Number of unexpected passes")
+    tests: list[TestDetail] = Field(default_factory=list, description="Per-test details (empty if no tests)")
+    exit_code: int = Field(default=-1, description="pytest process exit code")
+    duration_seconds: float = Field(ge=0.0, description="Wall-clock duration of test execution")
+    files_tested: list[str] = Field(default_factory=list, description="Repo-relative paths of test files that were executed")
+    stdout: str = Field(default="", description="Raw test output (if parsing fails)")
+
+
 class ReproductionResult(BaseModel):
     """Structured result from reproduction execution (D-11, D-12)."""
 

@@ -39,12 +39,12 @@ created: 2026-05-25
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
 | 05-01-01 | 01 | 1 | VERIF-01 | T-05-01 | Pydantic validation rejects unknown fields | unit | `pytest tests/test_verification/test_models.py::test_verification_result_valid -x` | ❌ W0 | ⬜ pending |
-| 05-01-02 | 01 | 1 | VERIF-01 | — | N/A | unit | `pytest tests/test_verification/test_engine.py::test_map_test_files -x` | ❌ W0 | ⬜ pending |
-| 05-02-01 | 02 | 1 | VERIF-01 | T-05-02 | Path traversal protection: Path.resolve()+startswith() | unit | `pytest tests/test_verification/test_engine.py::test_detect_framework -x` | ❌ W0 | ⬜ pending |
-| 05-02-02 | 02 | 1 | VERIF-02 | T-05-03 | test_timeout kills long-running processes | unit | `pytest tests/test_verification/test_engine.py::test_parse_json_report -x` | ❌ W0 | ⬜ pending |
-| 05-03-01 | 03 | 2 | VERIF-01 | T-05-02 | exec_shell runs test command via subprocess | integration | `pytest tests/test_verification/test_engine.py::test_execute_tests -x` | ❌ W0 | ⬜ pending |
-| 05-04-01 | 04 | 3 | VERIF-02 | T-05-03 | Rich display captures stdout/stderr | integration | `pytest tests/test_verification/test_cli.py::test_verify_display -x` | ❌ W0 | ⬜ pending |
-| 05-04-02 | 04 | 3 | VERIF-02 | T-05-03 | --output writes valid JSON | integration | `pytest tests/test_verification/test_cli.py::test_verify_output -x` | ❌ W0 | ⬜ pending |
+| 05-02-01 | 02 | 2 | VERIF-01 | T-05-02 | Path traversal protection: Path.resolve()+startswith() | unit | `pytest tests/test_verification/test_engine.py::test_map_test_files -x` | ❌ W0 | ⬜ pending |
+| 05-02-02 | 02 | 2 | VERIF-01 | — | Framework detection probes pytest configs | unit | `pytest tests/test_verification/test_engine.py::test_detect_framework -x` | ❌ W0 | ⬜ pending |
+| 05-02-03 | 02 | 2 | VERIF-02 | T-05-03 | test_timeout kills long-running processes | integration | `pytest tests/test_verification/test_engine.py::test_execute_tests -x` | ❌ W0 | ⬜ pending |
+| 05-03-01 | 03 | 3 | VERIF-01 | T-05-02 | exec_shell runs test command via subprocess | integration | `pytest tests/test_verification/test_engine.py::test_parse_json_report -x` | ❌ W0 | ⬜ pending |
+| 05-03-02 | 03 | 3 | VERIF-02 | T-05-03 | Rich display captures stdout/stderr | unit | `python -m ascend_agent verify --help` | ✅ | ⬜ pending |
+| 05-03-03 | 03 | 3 | VERIF-02 | — | --output writes valid JSON | integration | `pytest tests/test_verification/test_cli.py::test_verify_output -x` | ❌ W0 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 

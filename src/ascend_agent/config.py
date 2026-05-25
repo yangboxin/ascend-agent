@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     ssh_user: str = Field(default="", description="SSH username for remote execution")
     ssh_key_path: str = Field(default="", description="Path to SSH private key file (fallback if agent unavailable)")
     shell_timeout: int = Field(default=60, ge=1, description="Default timeout in seconds for shell commands")
+    test_timeout: int = Field(default=300, ge=1, description="Default timeout in seconds for test execution")
 
     def model_post_init(self, __context):
         self.python_version = sys.version
