@@ -197,3 +197,78 @@ def test_fix_run_missing_api_key(tmp_path, monkeypatch):
     result = runner.invoke(app, ["fix", "run", diagnosis_path])
     assert result.exit_code == 1
     assert "OPENAI_API_KEY" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# Reproduction CLI tests
+# ---------------------------------------------------------------------------
+
+
+def _write_repro_diagnosis_json(tmp_path) -> str:
+    """Write a minimal valid DiagnosisOutput JSON for reproduce testing."""
+    import json
+
+    data = {
+        "context_doc": {
+            "repo": {"path": str(tmp_path), "language": "python", "file_count": 0, "structure": []},
+            "trace": None,
+            "config_env": {"python_version": "3.10", "platform": "linux", "env_vars": {}},
+        },
+        "diagnosis_result": {"hypotheses": [], "errors": [], "iterations_used": 0},
+    }
+    path = tmp_path / "diagnosis.json"
+    path.write_text(json.dumps(data))
+    return str(path)
+
+
+def test_reproduce_run_command(tmp_path, monkeypatch):
+    """reproduce run loads diagnosis JSON and displays results."""
+    from unittest.mock import AsyncMock, Mock
+    from ascend_agent.diagnosis.models import ReproductionResult
+
+    diagnosis_path = _write_repro_diagnosis_json(tmp_path)
+
+    mock_result = ReproductionResult(
+        status="success",
+        command="echo test",
+        stdout="hello",
+        stderr="",
+        exit_code=0,
+        duration_seconds=0.1,
+        hypothesis_id_tested=-1,
+        files_changed=[],
+    )
+    mock_engine = Mock()
+    mock_engine.reproduce = AsyncMock(return_value=mock_result)
+
+    monkeypatch.setattr(
+        "ascend_agent.cli.reproduce.ReproductionEngine",
+        lambda *args, **kwargs: mock_engine,
+    )
+    monkeypatch.setattr(
+        "ascend_agent.diagnosis.router.ModelRouter.__init__",
+        lambda self, **kwargs: None,
+    )
+
+    result = runner.invoke(app, ["reproduce", "run", diagnosis_path])
+    assert result.exit_code == 0
+    assert "Reproduction Result" in result.stdout
+    assert "success" in result.stdout
+
+
+def test_reproduce_run_missing_file():
+    """reproduce run exits with code 1 when file does not exist."""
+    result = runner.invoke(app, ["reproduce", "run", "nonexistent.json"])
+    assert result.exit_code == 1
+    assert "Error" in result.stdout
+
+
+def test_reproduce_run_missing_api_key(tmp_path, monkeypatch):
+    """reproduce run exits with code 1 when API key is missing."""
+    diagnosis_path = _write_repro_diagnosis_json(tmp_path)
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    result = runner.invoke(app, ["reproduce", "run", diagnosis_path])
+    assert result.exit_code == 1
+    assert "OPENAI_API_KEY" in result.stdout
