@@ -11,7 +11,7 @@ mcp = FastMCP("ascend-agent-tools")
 
 mcp.tool(name="code_search", description="Search for a regex pattern in Python files in the codebase")(search_code)
 mcp.tool(name="edit_file", description="Edit a file using search-and-replace operations with automatic .bak backup")(edit_file)
-mcp.tool(name="exec_shell", description="[STUB] Execute a shell command — implemented in Phase 4")(exec_shell)
+mcp.tool(name="exec_shell", description="Execute a shell command locally or via SSH. Returns JSON with status, stdout, stderr, and exit_code. Non-interactive only — no PTY allocation.")(exec_shell)
 mcp.tool(name="run_test", description="[STUB] Run a test command — implemented in Phase 5")(run_test)
 
 if __name__ == "__main__":
