@@ -1,6 +1,6 @@
 # Phase 3: Fix Generation - Context
 
-**Gathered:** 2026-05-21
+**Gathered:** 2026-05-21 (updated 2026-05-25)
 **Status:** Ready for planning
 
 <domain>
@@ -21,10 +21,10 @@ Generate code fixes based on Phase 2 diagnosis findings. Takes `DiagnosisResult`
 ## Implementation Decisions
 
 ### Fix Representation Format
-- **D-01:** Fixes are represented as unified diff patches (git diff format). LLMs handle this well, familiar to developers, previewable with Rich Syntax highlighting.
+- **D-01:** Fixes use search-and-replace (old_text → new_text) as the primary internal representation. Unified diff patches are computed from replacements via `difflib.unified_diff()` for human display only. The LLM outputs structured `Replacement` objects (file_path, old_text, new_text), not patch text.
 - **D-02:** One fix = one patch over one file. If a fix touches multiple files, produce multiple patches referencing the same hypothesis.
-- **D-03:** Patch display includes surrounding code context (5-10 lines around changes) as interleaved diff, not just the raw patch.
-- **D-04:** Pydantic model: `FixSuggestion` per patch (file_path, diff_patch, explanation, hypothesis_id). `FixGenerationResult` wraps a list of `FixSuggestion` with metadata.
+- **D-03:** Patch display uses Rich Syntax with the "diff" lexer and line numbers inside a Rich Panel (reusing the display pattern from Phase 2). Display shows the computed unified diff, not raw patch text.
+- **D-04:** Pydantic model: `FixSuggestion` per file (file_path, diff_patch, explanation, hypothesis_id, replacements list). `FixGenerationResult` wraps a list of `FixSuggestion` with errors and total count.
 
 ### Fix Engine Design
 - **D-05:** Generate fixes for all hypotheses in the diagnosis, not just the top one.
@@ -35,7 +35,7 @@ Generate code fixes based on Phase 2 diagnosis findings. Takes `DiagnosisResult`
 ### Human Review Workflow
 - **D-09:** Sequential review — show one fix at a time. Focused review per fix, not batch view.
 - **D-10:** Actions per fix: Accept / Skip / Reject. Accept queues the fix for later application, Skip leaves it, Reject discards it.
-- **D-11:** Diff display uses Rich Panel + Syntax highlighting (green/red for added/removed lines), reusing the approach from Phase 2 diagnosis display.
+- **D-11:** Diff display uses Rich Panel + Syntax with the "diff" lexer showing line numbers (green for added, red for removed), reusing the approach from Phase 2 diagnosis display.
 - **D-12:** Accepted fixes are queued and applied in batch after all fixes are reviewed. User sees a summary of what was applied.
 
 ### edit_file Tool Design
@@ -44,16 +44,27 @@ Generate code fixes based on Phase 2 diagnosis findings. Takes `DiagnosisResult`
 - **D-15:** Apply directly — no preview/dry-run mode in the tool itself. Preview is handled by the fix generation review workflow.
 - **D-16:** Accepts multiple replacements in one call (list of `{old_text, new_text}` operations). All validated before any are applied.
 
+### Batch Application (new)
+- **D-20:** Batch application groups accepted fix suggestions by file, collapses all replacements per file, calls `edit_file` once per file with the full replacement list.
+
+### Downstream Contracts (new)
+- **D-21:** `FixSuggestion` schema is stable/frozen — downstream phases (Phase 4 Reproduction, Phase 5 Verification) can depend on its shape. Agents read `src/ascend_agent/diagnosis/models.py` for the schema. Output-only contract — downstream phases do not depend on Phase 3 internals (FixEngine, edit_file).
+
+### Engineering Patterns (new — graduated from Agent's Discretion)
+- **D-22:** FixEngine follows the Phase 2 Engine pattern: constructor takes `router: ModelRouter` + `repo_path`, public `generate_fixes()` method returns `FixGenerationResult` with structured error handling via `PartialFailure`.
+- **D-23:** `DiagnosisOutput` wraps `ContextDocument` + `DiagnosisResult` to provide the repo path for FixEngine. Saved by `diagnose --output`.
+- **D-24:** Two-layer model design: `FixResponse` is the LLM output model (freeform `replacements` list), `FixSuggestion` is the persisted artifact (validated `replacements` + computed `diff_patch` + metadata).
+
+### Fix Validation Rules (new — graduated from Agent's Discretion)
+- **D-25:** FixEngine validates each replacement before producing a FixSuggestion. Checks: (a) exact `old_text` match exists in file, (b) match is unique (includes sufficient surrounding context), (c) resolved file path stays within repo boundary (path traversal protection), (d) target file exists. Invalid replacements are skipped with a warning log.
+
 ### Diagnosis Integration
 - **D-17:** `ascend-agent fix run [diagnosis.json]` — if argument is a file path, read from file; if no argument, read from stdin.
 - **D-18:** Repo path extracted from the diagnosis JSON via a wrapper that includes both `ContextDocument` and `DiagnosisResult`. The `--output` flag on `diagnose run` saves this wrapper.
 - **D-19:** `--output fixes.json` saves the list of accepted `FixSuggestion` entries with their diffs for audit/scripting.
 
 ### The Agent's Discretion
-- Exact prompt engineering for the fix generation LLM calls.
-- The FixEngine class design (constructor, public API, internal helpers) — follow the Engine pattern from Phase 2.
-- The DiagnosisOutput wrapper model shape (ContextDocument + DiagnosisResult).
-- The FixSuggestion and FixGenerationResult Pydantic models, including exact diff_patch format within the unified diff standard.
+- Exact prompt engineering for the fix generation LLM calls (system prompt, user prompt format).
 - Test approach and coverage targets.
 
 </decisions>
@@ -73,20 +84,17 @@ Generate code fixes based on Phase 2 diagnosis findings. Takes `DiagnosisResult`
 - `.planning/phases/02-diagnosis-engine/02-CONTEXT.md` — Diagnosis engine pattern (multi-turn LLM strategy), ModelRouter design, deferred fix suggestions
 - `.planning/phases/02-diagnosis-engine/02-RESEARCH.md` — Research findings that informed diagnosis engine choices
 
-### Existing Code Patterns
-- `src/ascend_agent/cli/fix.py` — Existing fix CLI stub (to be replaced with full implementation)
-- `src/ascend_agent/tools/file_edit.py` — Existing edit_file tool stub (to be implemented)
-- `src/ascend_agent/diagnosis/models.py` — Evidence, Hypothesis, DiagnosisResult models (consumed as input)
-- `src/ascend_agent/diagnosis/engine.py` — Engine pattern to follow (multi-turn LLM loop, ModelRouter integration)
-- `src/ascend_agent/diagnosis/router.py` — ModelRouter abstraction (to be reused for fix generation)
-- `src/ascend_agent/cli/diagnose.py` — Diagose command pattern (one-shot + --output, Rich display)
-- `src/ascend_agent/tools/server.py` — FastMCP server with tool registration pattern (edit_file already registered as stub)
+### Phase 3 Implementation (Implemented — consumed by downstream phases)
+- `src/ascend_agent/diagnosis/models.py` — FixSuggestion, FixGenerationResult, FixResponse, Replacement, DiagnosisOutput models (stable schema, D-21)
+- `src/ascend_agent/diagnosis/fix_engine.py` — FixEngine class implementing fix generation logic (D-22, D-24, D-25)
+- `src/ascend_agent/cli/fix.py` — `fix run` CLI command with sequential review and batch apply (D-09 through D-12, D-17, D-19, D-20)
+- `src/ascend_agent/tools/file_edit.py` — edit_file MCP tool with search-and-replace, .bak backup, multi-replacement validation (D-13 through D-16)
 
-### Phase 3 Integration Points
-- `src/ascend_agent/cli/fix.py` — CLI command to implement
-- `src/ascend_agent/tools/file_edit.py` — MCP tool to implement
-- `src/ascend_agent/diagnosis/models.py` — DiagnosisResult consumed as input, new FixSuggestion/FixGenerationResult/DiagnosisOutput models to be added
-- `src/ascend_agent/cli/app.py` — fix sub-typer already registered
+### Phase 1 & 2 Foundation (Patterns reused by Phase 3)
+- `src/ascend_agent/diagnosis/engine.py` — Engine pattern (multi-turn LLM loop, ModelRouter integration)
+- `src/ascend_agent/diagnosis/router.py` — ModelRouter abstraction reused for fix generation
+- `src/ascend_agent/cli/diagnose.py` — Diagnose command pattern (one-shot + --output, Rich display)
+- `src/ascend_agent/tools/server.py` — FastMCP server with tool registration pattern
 
 </canonical_refs>
 
@@ -96,10 +104,11 @@ Generate code fixes based on Phase 2 diagnosis findings. Takes `DiagnosisResult`
 ### Reusable Assets
 - `ModelRouter` in `src/ascend_agent/diagnosis/router.py` — OpenAI client wrapper with structured outputs via `.parse()`. Reused directly for fix generation LLM calls.
 - `Engine` class in `src/ascend_agent/diagnosis/engine.py` — Multi-turn LLM loop pattern with search iterations. FixEngine follows the same architecture.
-- `_read_function_body` in `src/ascend_agent/diagnosis/engine.py` — AST-based function extraction. FixEngine can use this to read code before generating fixes.
+- `_read_function_body` in `src/ascend_agent/diagnosis/engine.py` — AST-based function extraction. FixEngine uses this to read code before generating fixes.
 - `DiagnosisResult` in `src/ascend_agent/diagnosis/models.py` — Input model for fix generation. Contains `hypotheses` with `evidence` (file:line + code snippets).
-- `DiagnosisResult._display_diagnosis` pattern in `src/ascend_agent/cli/diagnose.py` — Rich Panel + Syntax for formatted output. Reusable for fix review display.
-- FastMCP server in `src/ascend_agent/tools/server.py` — `edit_file` already registered as a stub tool.
+- `FixSuggestion` in `src/ascend_agent/diagnosis/models.py` — Output model consumed by Phase 4/5. Contains `file_path`, `diff_patch`, `explanation`, `hypothesis_id`, `replacements`. Stable schema (D-21).
+- Rich Panel + Syntax display pattern in `src/ascend_agent/cli/fix.py` — Used for diff review display.
+- FastMCP server in `src/ascend_agent/tools/server.py` — `edit_file` tool registered and implemented.
 
 ### Established Patterns
 - Typer-based CLI with subcommands, Rich terminal output.
@@ -110,11 +119,12 @@ Generate code fixes based on Phase 2 diagnosis findings. Takes `DiagnosisResult`
 - LLM strategy: multi-turn with system prompt + context accumulation, `openai .parse()` for structured outputs.
 
 ### Integration Points
-- `fix run` CLI command replaces the current stub — accepts diagnosis JSON file or stdin.
-- `edit_file` MCP tool replaces the current stub — implements search-and-replace with backup.
-- Fix engine reads the repo via Path (like Engine does) to access source files for context.
+- `fix run` CLI command accepts diagnosis JSON file or stdin, produces accepted fix suggestions.
+- `edit_file` MCP tool is fully implemented with search-and-replace, .bak backup, multi-replacement validation.
+- Fix engine reads the repo via Path to access source files for context.
 - Review workflow happens in the CLI process (not MCP) — Rich interactive prompt loop.
-- Batch application of accepted fixes calls `edit_file` for each queued fix.
+- Batch application of accepted fixes groups by file, collapses replacements, calls `edit_file` once per file.
+- Phase 4 consumes `FixSuggestion` schema (stable, D-21) from `--output fixes.json` output.
 
 </code_context>
 
@@ -134,8 +144,6 @@ Generate code fixes based on Phase 2 diagnosis findings. Takes `DiagnosisResult`
 - **Modify-fix during review** — Allowing the user to edit a fix suggestion inline before accepting. Complex UI in terminal. Deferred to a future UX improvement phase.
 - **Side-by-side diff view** — Original code next to fixed code. Needs Rich layout experimentation. Deferred until the sequential diff panel approach is proven insufficient.
 - **Git-auto-stage before edits** — Auto-staging current state before applying fixes. Deferred — .bak backup approach is sufficient initially.
-
-None — discussion stayed within phase scope.
 
 </deferred>
 
