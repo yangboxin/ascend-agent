@@ -141,6 +141,29 @@ class FixGenerationResult(BaseModel):
     )
 
 
+class ReproductionResult(BaseModel):
+    """Structured result from reproduction execution (D-11, D-12)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: str = Field(
+        pattern=r"^(success|fail|error)$",
+        description="Outcome: success (exit 0), fail (non-zero exit), error (execution failure)",
+    )
+    command: str = Field(description="The command that was executed")
+    stdout: str = Field(default="", description="Standard output captured")
+    stderr: str = Field(default="", description="Standard error captured")
+    exit_code: int = Field(default=-1, description="Process exit code")
+    duration_seconds: float = Field(ge=0.0, description="Wall-clock duration of command execution")
+    hypothesis_id_tested: int = Field(
+        ge=-1, description="Index of hypothesis this test addresses (-1 if none)"
+    )
+    files_changed: list[str] = Field(
+        default_factory=list,
+        description="List of repo-relative paths to files modified during reproduction",
+    )
+
+
 class DiagnosisOutput(BaseModel):
     """Wrapper for diagnosis output combining context document and diagnosis result."""
 
