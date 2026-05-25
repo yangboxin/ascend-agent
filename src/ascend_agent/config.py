@@ -1,6 +1,7 @@
 import os
 import sys
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -12,6 +13,10 @@ class Settings(BaseSettings):
     env_vars: dict[str, str] = {}
     repo_path: str | None = None
     mcp_server_command: str = "python -m ascend_agent.tools.server"
+    ssh_host: str = Field(default="", description="SSH hostname for remote execution")
+    ssh_user: str = Field(default="", description="SSH username for remote execution")
+    ssh_key_path: str = Field(default="", description="Path to SSH private key file (fallback if agent unavailable)")
+    shell_timeout: int = Field(default=60, ge=1, description="Default timeout in seconds for shell commands")
 
     def model_post_init(self, __context):
         self.python_version = sys.version
