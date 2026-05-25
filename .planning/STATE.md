@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: completed
-stopped_at: Phase 4 context gathered
-last_updated: "2026-05-25T06:31:22.593Z"
-last_activity: 2026-05-21 — Phase 3 executed (3 plans in 2 waves)
+stopped_at: Phase 4 executed
+last_updated: "2026-05-25T15:25:00.000Z"
+last_activity: 2026-05-25 — Phase 4 executed (5 plans in 3 waves)
 progress:
   total_phases: 5
-  completed_phases: 3
-  total_plans: 11
-  completed_plans: 11
-  percent: 60
+  completed_phases: 4
+  total_plans: 16
+  completed_plans: 16
+  percent: 80
 ---
 
 # Project State
@@ -21,24 +21,24 @@ progress:
 See: .planning/PROJECT.md (updated 2025-05-20)
 
 **Core value:** Enable the Ascend maintenance team to diagnose and fix production issues 10x faster
-**Current focus:** Phase 3 complete — ready for Phase 4 (Reproduction Capability)
+**Current focus:** Phase 4 complete — ready for Phase 5 (Verification)
 
 ## Current Position
 
-Phase: 3 of 5 (Fix Generation)
-Plan: 3 plans in 2 waves — all complete
-Status: Phase 3 complete — FixEngine, edit_file, fix CLI all implemented
-Last activity: 2026-05-21 — Phase 3 executed (3 plans in 2 waves)
+Phase: 4 of 5 (Reproduction Capability)
+Plan: 5 plans in 3 waves — all complete
+Status: Phase 4 complete — ReproductionEngine, exec_shell, reproduce CLI all implemented
+Last activity: 2026-05-25 — Phase 4 executed (5 plans in 3 waves)
 
-Progress: [██████████████████░░░░] 60% (3 of 5 phases complete)
+Progress: [████████████████████░░] 80% (4 of 5 phases complete)
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 11
-- Average duration: 11 min
-- Total execution time: 120 min
+- Total plans completed: 16
+- Average duration: ~11 min
+- Total execution time: ~175 min
 
 ## Accumulated Context
 
@@ -58,6 +58,10 @@ Recent decisions affecting current work:
 - Phase 2: Engine._execute_search uses asyncio.run() for sync-to-async bridge
 - Phase 2: CLI uses Rich Panel + Syntax highlighting for diagnosis result display
 - Phase 2: Missing API key produces clear ValueError with actionable message (not crash)
+- Phase 4: asyncssh for SSH execution, known_hosts=None for internal test machines
+- Phase 4: exec_shell routes local/remote based on ASCEND_SSH_HOST env var
+- Phase 4: ReproductionEngine uses heuristic command construction (not LLM) from evidence paths
+- Phase 4: Path traversal protection follows edit_file pattern (Path.resolve() + startswith())
 
 ### Plans Created
 
@@ -74,6 +78,11 @@ Recent decisions affecting current work:
 | 03-01 | Fix models (FixSuggestion, FixEngine), diagnose --output, tests | 1 | 3 | ✅ | ✅ |
 | 03-03 | edit_file MCP tool with search-and-replace, .bak, validation, tests | 1 | 2 | ✅ | ✅ |
 | 03-02 | fix run CLI, review workflow, batch apply, --output, tests | 2 | 3 | ✅ | ✅ |
+| 04-01 | asyncssh dependency + SSH config fields | 1 | 3 | ❌ (checkpoint) | ✅ |
+| 04-02 | ReproductionResult model + test infra | 1 | 3 | ✅ | ✅ |
+| 04-03 | exec_shell MCP tool (local + SSH) | 1 | 3 | ✅ | ✅ |
+| 04-04 | ReproductionEngine class | 2 | 2 | ✅ | ✅ |
+| 04-05 | reproduce CLI + integration tests | 3 | 3 | ❌ (checkpoint) | ✅ |
 
 ### Pending Todos
 
@@ -81,10 +90,10 @@ None yet.
 
 ### Blockers/Concerns
 
-None yet.
+- asyncssh requires Python >=3.10 (system is 3.9.6). Install Python 3.10+ runtime before testing.
 
 ## Session Continuity
 
-Last session: 2026-05-25T06:31:22.588Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-reproduction-capability/04-CONTEXT.md
+Last session: 2026-05-25T15:25:00.000Z
+Stopped at: Phase 4 executed
+Resume file: .planning/phases/05-verification/05-CONTEXT.md
