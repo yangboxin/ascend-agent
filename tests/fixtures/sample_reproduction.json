@@ -1,0 +1,10 @@
+{
+  "status": "success",
+  "command": "python -m pytest tests/test_shell_exec.py",
+  "stdout": "1 passed",
+  "stderr": "",
+  "exit_code": 0,
+  "duration_seconds": 1.5,
+  "hypothesis_id_tested": 0,
+  "files_changed": ["src/ascend_agent/tools/shell_exec.py"]
+}
