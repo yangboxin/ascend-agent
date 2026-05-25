@@ -142,6 +142,25 @@
 2. Agent reports pass/fail status with details
 3. Agent provides summary of what was verified
 
+**Plans:** 3 plans in 3 waves
+
+**Wave 1 *(foundation)* — Plan 05-01**
+- [ ] 05-01-PLAN.md — Install pytest-json-report (package legitimacy gate), add VerificationResult + TestDetail Pydantic models, add test_timeout to Settings (D-01, D-03), create test verification package skeleton with conftest fixtures and model tests
+
+**Wave 2 *(engine)* — Plan 05-02**
+- [ ] 05-02-PLAN.md — Create VerificationEngine class with detect→map→execute→parse→report workflow (D-01, D-02, D-03, D-04), path traversal protection, 12 unit tests
+
+**Wave 3 *(integration)* — Plan 05-03**
+- [ ] 05-03-PLAN.md — Implement run_test MCP tool (replaces Phase 1 stub), create verify CLI command with Rich display + --output flag, register in app.py, update server.py description
+
+**Cross-cutting constraints:**
+- VerificationEngine is deterministic — no LLM required (follows Engine pattern but does not call ModelRouter)
+- exec_shell MCP tool reused for test execution (D-04) — subprocess with pytest --json-report
+- Path traversal protection: all test file paths validated against repo boundary
+- pytest-json-report install gated behind package legitimacy checkpoint (package is [ASSUMED])
+- test_timeout defaults to 300s (configurable) to handle long test suites
+- Only relevant tests run by default (D-02) — no full test suite unless --full flag added in future
+
 ---
 
 ## Summary
