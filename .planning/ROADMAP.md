@@ -132,26 +132,27 @@
 
 ---
 
-## Phase 5: Verification &闭环
+## Phase 5: Verification &闭环 ✅
 **Goal:** Verify fixes by running tests and reporting results.
+**Completed:** 2026-05-25
 
 **Requirements:** VERIF-01, VERIF-02
 
 **Success Criteria:**
-1. Agent runs relevant tests to verify fixes
-2. Agent reports pass/fail status with details
-3. Agent provides summary of what was verified
+1. ✅ Agent runs relevant tests to verify fixes
+2. ✅ Agent reports pass/fail status with details
+3. ✅ Agent provides summary of what was verified
 
 **Plans:** 3 plans in 3 waves
 
-**Wave 1 *(foundation)* — Plan 05-01**
-- [ ] 05-01-PLAN.md — Install pytest-json-report (package legitimacy gate), add VerificationResult + TestDetail Pydantic models, add test_timeout to Settings (D-01, D-03), create test verification package skeleton with conftest fixtures and model tests
+**Wave 1 *(foundation)* — Plan 05-01** ✅
+- [x] 05-01-PLAN.md — Install pytest-json-report (package legitimacy gate), add VerificationResult + TestDetail Pydantic models, add test_timeout to Settings (D-01, D-03), create test verification package skeleton with conftest fixtures and model tests
 
-**Wave 2 *(engine)* — Plan 05-02**
-- [ ] 05-02-PLAN.md — Create VerificationEngine class with detect→map→execute→parse→report workflow (D-01, D-02, D-03, D-04), path traversal protection, 12 unit tests
+**Wave 2 *(engine)* — Plan 05-02** ✅
+- [x] 05-02-PLAN.md — Create VerificationEngine class with detect→map→execute→parse→report workflow (D-01, D-02, D-03, D-04), path traversal protection, 12 unit tests
 
-**Wave 3 *(integration)* — Plan 05-03**
-- [ ] 05-03-PLAN.md — Implement run_test MCP tool (replaces Phase 1 stub), create verify CLI command with Rich display + --output flag, register in app.py, update server.py description
+**Wave 3 *(integration)* — Plan 05-03** ✅
+- [x] 05-03-PLAN.md — Implement run_test MCP tool (replaces Phase 1 stub), create verify CLI command with Rich display + --output flag, register in app.py, update server.py description
 
 **Cross-cutting constraints:**
 - VerificationEngine is deterministic — no LLM required (follows Engine pattern but does not call ModelRouter)
@@ -171,9 +172,9 @@
 | 2 | Diagnosis Engine ✅ | DIAG-01, DIAG-02 | 3 ✓ |
 | 3 | Fix Generation ✅ | FIX-01, FIX-02 | 3 ✓ |
 | 4 | Reproduction Capability ✅ | REPRO-01 | 3 ✓ |
-| 5 | Verification &闭环 | VERIF-01, VERIF-02 | 3 |
+| 5 | Verification &闭环 ✅ | VERIF-01, VERIF-02 | 3 ✓ |
 
-**Total: 5 phases (4 complete, 1 planned) | 9 requirements | 15 success criteria**
+**Total: 5 phases (5 complete) | 9 requirements | 15 success criteria**
 
 ---
 
