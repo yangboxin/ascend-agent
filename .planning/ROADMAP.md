@@ -40,6 +40,9 @@
 ### 🚧 v1.1 Multi-Provider & Multi-Repo (In Progress)
 
 - [ ] Phase 6: Provider Routing Foundation (4 requirements) — PROV-01..04
+  Plans:
+  - [ ] 06-01-PLAN.md — Core infra: ProviderConfig, create_router, ModelRouter update, Settings fields, root --provider flag, router tests
+  - [ ] 06-02-PLAN.md — CLI wiring: create_router() in all 4 CLI commands, per-command --provider overrides, CLI integration tests
 - [ ] Phase 7: Chinese Model Integration (4 requirements) — CHN-01..04
 - [ ] Phase 8: Multi-Repo Support (4 requirements) — REPO-01..04
 - [ ] Phase 9: Provider & Multi-Repo Testing (4 requirements) — TEST-01..04
@@ -53,7 +56,7 @@
 | 3. Fix Generation | v1.0 | 3/3 | Complete | 2026-05-21 |
 | 4. Reproduction Capability | v1.0 | 5/5 | Complete | 2026-05-25 |
 | 5. Verification &闭环 | v1.0 | 3/3 | Complete | 2026-05-25 |
-| 6. Provider Routing Foundation | v1.1 | 0/0 | Not started | - |
+| 6. Provider Routing Foundation | v1.1 | 2/0 | Not started | - |
 | 7. Chinese Model Integration | v1.1 | 0/0 | Not started | - |
 | 8. Multi-Repo Support | v1.1 | 0/0 | Not started | - |
 | 9. Provider & Multi-Repo Testing | v1.1 | 0/0 | Not started | - |
