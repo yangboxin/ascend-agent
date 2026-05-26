@@ -31,6 +31,32 @@ class Settings(BaseSettings):
         description="OpenAI-compatible base URL override (env: ASCEND_OPENAI_BASE_URL)",
     )
 
+    # Phase 7: Chinese provider config fields
+    deepseek_api_key: str = Field(
+        default="",
+        description="DeepSeek API key (env: ASCEND_DEEPSEEK_API_KEY)",
+    )
+    deepseek_base_url: str = Field(
+        default="",
+        description="DeepSeek base URL override (env: ASCEND_DEEPSEEK_BASE_URL)",
+    )
+    deepseek_default_model: str = Field(
+        default="",
+        description="DeepSeek default model override (env: ASCEND_DEEPSEEK_DEFAULT_MODEL)",
+    )
+    qwen_api_key: str = Field(
+        default="",
+        description="Qwen DashScope API key (env: ASCEND_QWEN_API_KEY)",
+    )
+    qwen_base_url: str = Field(
+        default="",
+        description="Qwen DashScope base URL override (env: ASCEND_QWEN_BASE_URL)",
+    )
+    qwen_default_model: str = Field(
+        default="",
+        description="Qwen default model override (env: ASCEND_QWEN_DEFAULT_MODEL)",
+    )
+
     def model_post_init(self, __context):
         self.python_version = sys.version
         self.platform = sys.platform

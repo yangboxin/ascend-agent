@@ -117,3 +117,77 @@ def test_model_router_backward_compat(monkeypatch):
 
     router = ModelRouter()
     assert router._model == "gpt-4o"
+
+
+def test_create_router_deepseek_defaults(monkeypatch):
+    monkeypatch.setenv("ASCEND_DEEPSEEK_API_KEY", "sk-deepseek")
+    captured = {}
+    def mock_openai_init(self, **kwargs):
+        captured.update(kwargs)
+    monkeypatch.setattr("openai.OpenAI.__init__", mock_openai_init)
+    from ascend_agent.diagnosis.router import create_router
+
+    router = create_router("deepseek")
+    assert captured.get("base_url") == "https://api.deepseek.com/v1"
+    assert captured.get("api_key") == "sk-deepseek"
+    assert router._model == "deepseek-v4-flash"
+
+
+def test_create_router_deepseek_custom_base_url(monkeypatch):
+    monkeypatch.setenv("ASCEND_DEEPSEEK_API_KEY", "sk-deepseek")
+    monkeypatch.setenv("ASCEND_DEEPSEEK_BASE_URL", "https://custom.deepseek.com/v1")
+    captured = {}
+    def mock_openai_init(self, **kwargs):
+        captured.update(kwargs)
+    monkeypatch.setattr("openai.OpenAI.__init__", mock_openai_init)
+    from ascend_agent.diagnosis.router import create_router
+
+    router = create_router("deepseek")
+    assert captured.get("base_url") == "https://custom.deepseek.com/v1"
+
+
+def test_create_router_deepseek_custom_model(monkeypatch):
+    monkeypatch.setenv("ASCEND_DEEPSEEK_API_KEY", "sk-deepseek")
+    monkeypatch.setenv("ASCEND_DEEPSEEK_DEFAULT_MODEL", "deepseek-v4-pro")
+    monkeypatch.setattr("openai.OpenAI.__init__", lambda self, **kwargs: None)
+    from ascend_agent.diagnosis.router import create_router
+
+    router = create_router("deepseek")
+    assert router._model == "deepseek-v4-pro"
+
+
+def test_create_router_qwen_defaults(monkeypatch):
+    monkeypatch.setenv("ASCEND_QWEN_API_KEY", "sk-qwen")
+    captured = {}
+    def mock_openai_init(self, **kwargs):
+        captured.update(kwargs)
+    monkeypatch.setattr("openai.OpenAI.__init__", mock_openai_init)
+    from ascend_agent.diagnosis.router import create_router
+
+    router = create_router("qwen")
+    assert captured.get("base_url") == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    assert router._model == "qwen-turbo"
+
+
+def test_create_router_deepseek_missing_key(monkeypatch):
+    monkeypatch.delenv("ASCEND_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    from ascend_agent.diagnosis.router import create_router
+
+    try:
+        create_router("deepseek")
+        assert False, "Should have raised ValueError"
+    except ValueError as e:
+        assert "ASCEND_DEEPSEEK_API_KEY" in str(e)
+
+
+def test_create_router_qwen_missing_key(monkeypatch):
+    monkeypatch.delenv("ASCEND_QWEN_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    from ascend_agent.diagnosis.router import create_router
+
+    try:
+        create_router("qwen")
+        assert False, "Should have raised ValueError"
+    except ValueError as e:
+        assert "ASCEND_QWEN_API_KEY" in str(e)

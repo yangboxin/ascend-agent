@@ -19,6 +19,13 @@ class ProviderConfig(BaseModel):
     default_model: str = Field(description="Default model name for this provider")
 
 
+PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
+    "openai": {"base_url": "https://api.openai.com/v1", "default_model": "gpt-4o"},
+    "deepseek": {"base_url": "https://api.deepseek.com/v1", "default_model": "deepseek-v4-flash"},
+    "qwen": {"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "default_model": "qwen-turbo"},
+}
+
+
 def create_router(provider: str = "openai") -> ModelRouter:
     """Create a configured ModelRouter for the given provider.
 
@@ -56,9 +63,9 @@ def create_router(provider: str = "openai") -> ModelRouter:
             )
 
     config = ProviderConfig(
-        base_url=base_url or "https://api.openai.com/v1",
+        base_url=base_url or PROVIDER_DEFAULTS.get(provider, {}).get("base_url", "https://api.openai.com/v1"),
         api_key=api_key,
-        default_model=os.environ.get(f"{prefix}_DEFAULT_MODEL", "gpt-4o"),
+        default_model=os.environ.get(f"{prefix}_DEFAULT_MODEL", PROVIDER_DEFAULTS.get(provider, {}).get("default_model", "gpt-4o")),
     )
     return ModelRouter(config=config)
 
