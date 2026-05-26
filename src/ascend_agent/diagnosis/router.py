@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 
-from openai import OpenAI
+from openai import APIStatusError, BadRequestError, OpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
@@ -124,14 +125,37 @@ class ModelRouter:
         Returns:
             Parsed Pydantic model instance of the response_model type.
         """
-        completion = self._client.chat.completions.parse(
-            model=self._model,
-            messages=messages,
-            response_format=response_model,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
-        return completion.choices[0].message.parsed
+        try:
+            completion = self._client.chat.completions.parse(
+                model=self._model,
+                messages=messages,
+                response_format=response_model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            return completion.choices[0].message.parsed
+        except (APIStatusError, BadRequestError) as e:
+            if e.status_code != 400:
+                raise
+            logger.warning(
+                "Structured output not supported by provider (model=%s, status=%d). "
+                "Falling back to manual JSON parsing.",
+                self._model,
+                e.status_code,
+            )
+            completion = self._client.chat.completions.create(
+                model=self._model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            content = completion.choices[0].message.content
+            if not content:
+                raise ValueError(
+                    f"Empty response from provider (model={self._model}). "
+                    "Cannot parse structured output."
+                )
+            return response_model.model_validate_json(content)
 
     def __repr__(self) -> str:
         return f"ModelRouter(model={self._model!r})"

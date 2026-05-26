@@ -191,3 +191,89 @@ def test_create_router_qwen_missing_key(monkeypatch):
         assert False, "Should have raised ValueError"
     except ValueError as e:
         assert "ASCEND_QWEN_API_KEY" in str(e)
+
+
+def test_completion_fallback_on_400(monkeypatch):
+    from unittest.mock import Mock
+    from openai import BadRequestError
+    from pydantic import BaseModel
+
+    class TestModel(BaseModel):
+        result: str
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr("openai.OpenAI.__init__", lambda self, **kwargs: None)
+    from ascend_agent.diagnosis.router import ModelRouter
+
+    router = ModelRouter()
+    mock_parse = Mock(side_effect=BadRequestError("Bad Request", response=Mock(status_code=400), body={}))
+    router._client.chat.completions.parse = mock_parse
+
+    mock_create_response = Mock()
+    mock_create_response.choices = [Mock(message=Mock(content='{"result": "ok"}'))]
+    router._client.chat.completions.create = Mock(return_value=mock_create_response)
+
+    result = router.completion(
+        messages=[{"role": "user", "content": "test"}],
+        response_model=TestModel,
+    )
+    assert isinstance(result, TestModel)
+    assert result.result == "ok"
+    assert mock_parse.called
+    assert router._client.chat.completions.create.called
+
+
+def test_completion_no_fallback_non_400(monkeypatch):
+    from unittest.mock import Mock
+    from openai import APIStatusError
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr("openai.OpenAI.__init__", lambda self, **kwargs: None)
+    from ascend_agent.diagnosis.router import ModelRouter
+    from pydantic import BaseModel
+
+    class TestModel(BaseModel):
+        result: str
+
+    router = ModelRouter()
+    mock_parse = Mock(side_effect=APIStatusError("Internal Error", response=Mock(status_code=500), body={}))
+    router._client.chat.completions.parse = mock_parse
+
+    try:
+        router.completion(
+            messages=[{"role": "user", "content": "test"}],
+            response_model=TestModel,
+        )
+        assert False, "Should have raised APIStatusError"
+    except APIStatusError:
+        pass
+
+
+def test_completion_fallback_empty_content(monkeypatch):
+    from unittest.mock import Mock
+    from openai import BadRequestError
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr("openai.OpenAI.__init__", lambda self, **kwargs: None)
+    from ascend_agent.diagnosis.router import ModelRouter
+    from pydantic import BaseModel
+
+    class TestModel(BaseModel):
+        result: str
+
+    router = ModelRouter()
+    mock_parse = Mock(side_effect=BadRequestError("Bad Request", response=Mock(status_code=400), body={}))
+    router._client.chat.completions.parse = mock_parse
+
+    mock_create_response = Mock()
+    mock_create_response.choices = [Mock(message=Mock(content=None))]
+    router._client.chat.completions.create = Mock(return_value=mock_create_response)
+
+    try:
+        router.completion(
+            messages=[{"role": "user", "content": "test"}],
+            response_model=TestModel,
+        )
+        assert False, "Should have raised ValueError"
+    except ValueError as e:
+        assert "Empty response" in str(e)
