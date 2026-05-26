@@ -1,17 +1,17 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-status: completed
-stopped_at: v1.0 milestone archived
-last_updated: "2026-05-25T17:30:00.000Z"
-last_activity: 2026-05-25 — v1.0 milestone shipped and archived (5 phases, 19 plans)
+milestone: v1.1
+milestone_name: multi-provider
+status: planning
+stopped_at: Defining requirements
+last_updated: "2026-05-25T18:00:00.000Z"
+last_activity: 2026-05-25 — Milestone v1.1 started
 progress:
-  total_phases: 5
-  completed_phases: 5
-  total_plans: 19
-  completed_plans: 19
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-05-25 after v1.0 milestone)
 
 **Core value:** Enable the Ascend maintenance team to diagnose and fix production issues 10x faster
-**Current focus:** v1.0 shipped — planning next milestone
+**Current focus:** v1.1 — multi-provider & multi-repo
 
 ## Current Position
 
-Phase: Milestone v1.0 complete
-Plan: 19 plans across 5 phases — all complete
-Status: v1.0 MVP shipped — full diagnostic pipeline built
-Last activity: 2026-05-25 — v1.0 milestone archived
+Phase: Not started (defining requirements)
+Plan: —
+Status: Defining requirements
+Last activity: 2026-05-25 — Milestone v1.1 started
 
-Progress: [████████████████████████] 100% (5 of 5 phases complete)
+Progress: [                    ] 0% (defining requirements)
 
 ## Performance Metrics
 

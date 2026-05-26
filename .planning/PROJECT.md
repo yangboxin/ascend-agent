@@ -25,6 +25,16 @@ Enable the Ascend maintenance team to diagnose and fix production issues 10x fas
   - pytest-json-report required in target environment for verification
   - Full test suite mode deferred (--full flag)
 
+## Current Milestone: v1.1 Multi-Provider & Multi-Repo
+
+**Goal:** Add LLM provider flexibility (Claude, Gemini, Ollama, Qwen, DeepSeek) with per-task cost optimization, and extend to multi-repo support.
+
+**Target features:**
+- Provider-agnostic ModelRouter supporting OpenAI, Anthropic, Google, Ollama, Chinese models
+- Per-task model routing via env vars + config file
+- Multi-repo support — diagnose/reproduce/verify across multiple target repos
+- Cost optimization — cheap models for simple tasks, capable models for complex reasoning
+
 ## Requirements
 
 ### Validated (shipped in v1.0)
