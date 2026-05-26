@@ -1,3 +1,31 @@
+import sys
+from unittest.mock import MagicMock
+
+# Mock mcp module before any ascend_agent imports to avoid Python 3.10+ match syntax errors
+# mcp (version 1.27.1) uses `match` statements which are SyntaxError on Python 3.9
+class _MockContext:
+    """Mock Context type for mcp.server.fastmcp."""
+    pass
+
+
+class _MockFastMCP:
+    """Mock FastMCP type for mcp.server.fastmcp."""
+    def __init__(self, *args, **kwargs):
+        pass
+
+    def tool(self, *args, **kwargs):
+        return lambda f: f
+
+
+_MCP_MOCK = MagicMock()
+_MCP_SERVER_MOCK = MagicMock()
+_MCP_FASTMCP_MOCK = MagicMock()
+_MCP_FASTMCP_MOCK.Context = _MockContext
+_MCP_FASTMCP_MOCK.FastMCP = _MockFastMCP
+sys.modules['mcp'] = _MCP_MOCK
+sys.modules['mcp.server'] = _MCP_SERVER_MOCK
+sys.modules['mcp.server.fastmcp'] = _MCP_FASTMCP_MOCK
+
 from typer.testing import CliRunner
 
 from ascend_agent.cli.app import app
@@ -26,7 +54,7 @@ def test_cli_diagnose_run_basic(tmp_path, monkeypatch):
     mock_engine.diagnose.return_value = Mock(hypotheses=[], errors=[], iterations_used=0)
     import ascend_agent.cli.diagnose as diag_mod
     monkeypatch.setattr(diag_mod, "Engine", lambda router, repo_path: mock_engine)
-    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self: None)
+    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
 
     result = runner.invoke(app, [
         "diagnose", "run", str(tmp_path),
@@ -65,7 +93,7 @@ def test_cli_diagnose_integration(tmp_path, monkeypatch):
 
     import ascend_agent.cli.diagnose as diag_mod
     monkeypatch.setattr(diag_mod, "Engine", lambda router, repo_path: mock_engine)
-    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self: None)
+    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
 
     result = runner.invoke(app, [
         "diagnose", "run", str(tmp_path),
@@ -272,3 +300,61 @@ def test_reproduce_run_missing_api_key(tmp_path, monkeypatch):
     result = runner.invoke(app, ["reproduce", "run", diagnosis_path])
     assert result.exit_code == 1
     assert "OPENAI_API_KEY" in result.stdout
+
+
+# ---------------------------------------------------------------------------
+# --provider flag tests
+# ---------------------------------------------------------------------------
+
+
+def test_cli_diagnose_root_provider_flag(tmp_path, monkeypatch):
+    """--provider flag at root level is passed to create_router."""
+    from unittest.mock import Mock
+
+    (tmp_path / "test.py").write_text("x = 1\n")
+
+    mock_engine = Mock()
+    mock_engine.diagnose.return_value = Mock(hypotheses=[], errors=[], iterations_used=0)
+    import ascend_agent.cli.diagnose as diag_mod
+    monkeypatch.setattr(diag_mod, "Engine", lambda router, repo_path: mock_engine)
+    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
+
+    result = runner.invoke(app, [
+        "--provider", "deepseek",
+        "diagnose", "run", str(tmp_path),
+        "--trace-text", "Error: test",
+    ])
+    assert result.exit_code == 0
+    assert "Repository Info" in result.stdout
+
+
+def test_cli_diagnose_per_command_provider_override(tmp_path, monkeypatch):
+    """Per-command --provider overrides root --provider."""
+    from unittest.mock import Mock
+
+    (tmp_path / "test.py").write_text("x = 1\n")
+
+    mock_engine = Mock()
+    mock_engine.diagnose.return_value = Mock(hypotheses=[], errors=[], iterations_used=0)
+    import ascend_agent.cli.diagnose as diag_mod
+    monkeypatch.setattr(diag_mod, "Engine", lambda router, repo_path: mock_engine)
+    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
+
+    result = runner.invoke(app, [
+        "--provider", "openai",
+        "diagnose", "run", "--provider", "deepseek",
+        str(tmp_path), "--trace-text", "Error: test",
+    ])
+    assert result.exit_code == 0
+    assert "Repository Info" in result.stdout
+
+
+def test_cli_provider_flag_help():
+    """--provider flag appears in help output."""
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "--provider" in result.stdout
+
+    result = runner.invoke(app, ["diagnose", "run", "--help"])
+    assert result.exit_code == 0
+    assert "--provider" in result.stdout

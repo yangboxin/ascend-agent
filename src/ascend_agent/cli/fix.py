@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import os
@@ -13,7 +15,9 @@ from rich.syntax import Syntax
 
 from ascend_agent.diagnosis.fix_engine import FixEngine
 from ascend_agent.diagnosis.models import DiagnosisOutput, FixSuggestion, FixGenerationResult, PartialFailure
-from ascend_agent.diagnosis.router import ModelRouter
+from typing import Optional
+
+from ascend_agent.diagnosis.router import create_router
 from ascend_agent.tools.file_edit import edit_file
 
 console = Console()
@@ -22,10 +26,12 @@ fix_app = typer.Typer(name="fix", help="Generate fixes based on diagnosis findin
 
 @fix_app.command(name="run")
 def fix_run(
-    diagnosis_file: str | None = typer.Argument(
+    ctx: typer.Context,
+    diagnosis_file: Optional[str] = typer.Argument(
         None, help="Path to diagnosis JSON file (reads from stdin if not provided)"
     ),
-    output: str | None = typer.Option(None, "--output", help="Path to write accepted fixes as JSON"),
+    output: Optional[str] = typer.Option(None, "--output", help="Path to write accepted fixes as JSON"),
+    provider: Optional[str] = typer.Option(None, "--provider", help="LLM provider (overrides root --provider)"),
 ):
     """Generate fix suggestions for a diagnosis result. Provide a diagnosis JSON file or pipe via stdin."""
     # ── 1. Read diagnosis JSON (D-17: file path or stdin) ──
@@ -49,13 +55,14 @@ def fix_run(
     repo_path = diagnosis_output.context_doc.repo.path
 
     # ── 3. Initialize FixEngine (D-07: ASCEND_FIX_MODEL) ──
+    resolved_provider = provider or (ctx.obj.get("provider", "openai") if ctx.obj else "openai")
     try:
-        router = ModelRouter(model=os.environ.get("ASCEND_FIX_MODEL", "gpt-4o"))
+        router = create_router(provider=resolved_provider)
         engine = FixEngine(router=router, repo_path=repo_path)
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
         console.print(
-            "[yellow]Hint: Set the OPENAI_API_KEY environment variable to use the fix engine.[/yellow]"
+            f"[yellow]Hint: Set the appropriate API key environment variable for provider '{resolved_provider}'.[/yellow]"
         )
         raise typer.Exit(code=1)
 

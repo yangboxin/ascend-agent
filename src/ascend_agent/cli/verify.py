@@ -1,8 +1,12 @@
 """verify CLI — run test verification on reproduction results."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import sys
+
+from typing import Optional
 
 import typer
 from rich.console import Console
@@ -10,7 +14,7 @@ from rich.table import Table
 
 from ascend_agent.config import settings
 from ascend_agent.diagnosis.models import ReproductionResult
-from ascend_agent.diagnosis.router import ModelRouter
+from ascend_agent.diagnosis.router import create_router
 from ascend_agent.verification.engine import VerificationEngine
 
 console = Console()
@@ -19,8 +23,10 @@ verify_app = typer.Typer(name="verify", help="Verify fixes by running relevant t
 
 @verify_app.command(name="run")
 def verify_run(
+    ctx: typer.Context,
     reproduction: str = typer.Argument(..., help="Path to reproduction result JSON"),
     output: str | None = typer.Option(None, "--output", "-o", help="Path to write verification result as JSON"),
+    provider: Optional[str] = typer.Option(None, "--provider", help="LLM provider (overrides root --provider)"),
 ):
     """Verify fixes by running tests against the changed files.
 
@@ -41,13 +47,14 @@ def verify_run(
         raise typer.Exit(code=1)
 
     repo_path = settings.repo_path or "."
+    resolved_provider = provider or (ctx.obj.get("provider", "openai") if ctx.obj else "openai")
 
     try:
-        router = ModelRouter()
+        router = create_router(provider=resolved_provider)
         engine = VerificationEngine(router=router, repo_path=repo_path, settings=settings)
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
-        console.print("[yellow]Hint: Set the OPENAI_API_KEY environment variable.[/yellow]")
+        console.print(f"[yellow]Hint: Set the appropriate API key environment variable for provider '{resolved_provider}'.[/yellow]")
         raise typer.Exit(code=1)
 
     console.print("\n[bold cyan]Running verification...[/bold cyan]")

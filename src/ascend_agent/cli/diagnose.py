@@ -1,5 +1,8 @@
+from __future__ import annotations
+
 import json
 import sys
+from typing import Optional
 
 import typer
 from rich.console import Console, Group
@@ -13,7 +16,7 @@ from ascend_agent.context.repo import RepoScanner
 from ascend_agent.context.trace import trace_from_file, trace_from_stdin, trace_from_text
 from ascend_agent.diagnosis.engine import Engine
 from ascend_agent.diagnosis.models import DiagnosisOutput, DiagnosisResult, Hypothesis, Evidence, PartialFailure
-from ascend_agent.diagnosis.router import ModelRouter
+from ascend_agent.diagnosis.router import create_router
 
 console = Console()
 diagnose_app = typer.Typer(name="diagnose", help="Diagnose an issue from a stack trace against a code repository")
@@ -21,22 +24,26 @@ diagnose_app = typer.Typer(name="diagnose", help="Diagnose an issue from a stack
 
 @diagnose_app.command(name="run")
 def diagnose_run(
+    ctx: typer.Context,
     repo: str = typer.Argument(..., help="Path to local repository"),
-    trace: str | None = typer.Option(None, "--trace", help="Path to trace/log file"),
-    trace_text: str | None = typer.Option(None, "--trace-text", help="Inline pasted trace text"),
-    output: str | None = typer.Option(None, "--output", help="Path to write context as JSON"),
+    trace: Optional[str] = typer.Option(None, "--trace", help="Path to trace/log file"),
+    trace_text: Optional[str] = typer.Option(None, "--trace-text", help="Inline pasted trace text"),
+    output: Optional[str] = typer.Option(None, "--output", help="Path to write context as JSON"),
     interactive: bool = typer.Option(False, "--interactive", "-i", help="Start interactive REPL mode"),
+    provider: Optional[str] = typer.Option(None, "--provider", help="LLM provider (overrides root --provider)"),
 ):
     """Analyze a stack trace against a code repository.
 
     Provide the trace as a file (--trace), inline text (--trace-text), or pipe via stdin.
     The repository path is required and must be a local directory.
     """
+    resolved_provider = provider or (ctx.obj.get("provider", "openai") if ctx.obj else "openai")
+
     if interactive:
         _repl_mode(repo)
         return
 
-    _one_shot_mode(repo, trace, trace_text, output)
+    _one_shot_mode(repo, trace, trace_text, output, resolved_provider)
 
 
 def _one_shot_mode(
@@ -44,6 +51,7 @@ def _one_shot_mode(
     trace_path: str | None,
     trace_text_arg: str | None,
     output_path: str | None,
+    provider: str = "openai",
 ):
     console.print("[bold]Ascend Diagnostic Agent[/bold]")
     console.print("[cyan]Building context...[/cyan]")
@@ -73,13 +81,13 @@ def _one_shot_mode(
 
     console.print("\n[bold cyan]Running diagnosis...[/bold cyan]")
     try:
-        router = ModelRouter()
+        router = create_router(provider=provider)
         engine = Engine(router=router, repo_path=repo)
         result = engine.diagnose(doc)
         _display_diagnosis(result)
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
-        console.print("[yellow]Hint: Set the OPENAI_API_KEY environment variable to use the diagnosis engine.[/yellow]")
+        console.print(f"[yellow]Hint: Set the appropriate API key environment variable for provider '{provider}'.[/yellow]")
         raise typer.Exit(code=1)
 
     if output_path is not None:

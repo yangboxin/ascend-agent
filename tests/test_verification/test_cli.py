@@ -55,7 +55,7 @@ def test_verify_run_with_fixture(tmp_path):
         mock_engine.verify.return_value = pass_result
         MockEngine.return_value = mock_engine
 
-        with patch("ascend_agent.cli.verify.ModelRouter.__init__", return_value=None):
+        with patch("ascend_agent.diagnosis.router.ModelRouter.__init__", return_value=None):
             result = runner.invoke(verify_app, ["run", str(fixture_path)])
 
     assert result.exit_code == 0
@@ -77,7 +77,7 @@ def test_verify_output_json(tmp_path):
         mock_engine.verify.return_value = pass_result
         MockEngine.return_value = mock_engine
 
-        with patch("ascend_agent.cli.verify.ModelRouter.__init__", return_value=None):
+        with patch("ascend_agent.diagnosis.router.ModelRouter.__init__", return_value=None):
             result = runner.invoke(verify_app, [
                 "run", str(fixture_path), "--output", str(output_path),
             ])

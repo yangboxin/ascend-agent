@@ -1,13 +1,17 @@
+from __future__ import annotations
+
 import asyncio
 import json
 import sys
+
+from typing import Optional
 
 import typer
 from rich.console import Console
 
 from ascend_agent.config import settings
 from ascend_agent.diagnosis.models import DiagnosisOutput, ReproductionResult
-from ascend_agent.diagnosis.router import ModelRouter
+from ascend_agent.diagnosis.router import create_router
 from ascend_agent.reproduction.engine import ReproductionEngine
 
 console = Console()
@@ -16,8 +20,10 @@ reproduce_app = typer.Typer(name="reproduce", help="Reproduce an issue from a di
 
 @reproduce_app.command(name="run")
 def reproduce_run(
+    ctx: typer.Context,
     diagnosis: str = typer.Argument(..., help="Path to diagnosis JSON file"),
-    output: str | None = typer.Option(None, "--output", "-o", help="Path to write reproduction result as JSON"),
+    output: Optional[str] = typer.Option(None, "--output", "-o", help="Path to write reproduction result as JSON"),
+    provider: Optional[str] = typer.Option(None, "--provider", help="LLM provider (overrides root --provider)"),
 ):
     """Reproduce diagnosed issues by executing reproduction commands.
 
@@ -39,13 +45,14 @@ def reproduce_run(
         raise typer.Exit(code=1)
 
     repo_path = diagnosis_output.context_doc.repo.path
+    resolved_provider = provider or (ctx.obj.get("provider", "openai") if ctx.obj else "openai")
 
     try:
-        router = ModelRouter()
+        router = create_router(provider=resolved_provider)
         engine = ReproductionEngine(router=router, repo_path=repo_path, settings=settings)
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
-        console.print("[yellow]Hint: Set the OPENAI_API_KEY environment variable.[/yellow]")
+        console.print(f"[yellow]Hint: Set the appropriate API key environment variable for provider '{resolved_provider}'.[/yellow]")
         raise typer.Exit(code=1)
 
     console.print("\n[bold cyan]Running reproduction...[/bold cyan]")
