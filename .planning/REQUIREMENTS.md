@@ -9,10 +9,10 @@
 
 ### Provider Routing
 
-- [ ] **PROV-01**: ModelRouter supports OpenAI-compatible `base_url` override via env var `ASCEND_OPENAI_BASE_URL`
-- [ ] **PROV-02**: ModelRouter supports per-provider API key via `ASCEND_*_API_KEY` pattern
+- [x] **PROV-01**: ModelRouter supports OpenAI-compatible `base_url` override via env var `ASCEND_OPENAI_BASE_URL`
+- [x] **PROV-02**: ModelRouter supports per-provider API key via `ASCEND_*_API_KEY` pattern
 - [ ] **PROV-03**: Provider config can be specified per CLI command via `--provider` flag
-- [ ] **PROV-04**: All existing providers fall back to `OPENAI_API_KEY` when provider-specific key is unset
+- [x] **PROV-04**: All existing providers fall back to `OPENAI_API_KEY` when provider-specific key is unset
 
 ### Chinese Models
 
@@ -67,10 +67,10 @@ Deferred to future release. Tracked but not in current roadmap.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PROV-01 | Phase 6 | Pending |
-| PROV-02 | Phase 6 | Pending |
+| PROV-01 | Phase 6 | Complete |
+| PROV-02 | Phase 6 | Complete |
 | PROV-03 | Phase 6 | Pending |
-| PROV-04 | Phase 6 | Pending |
+| PROV-04 | Phase 6 | Complete |
 | CHN-01 | Phase 7 | Pending |
 | CHN-02 | Phase 7 | Pending |
 | CHN-03 | Phase 7 | Pending |
@@ -92,4 +92,4 @@ Deferred to future release. Tracked but not in current roadmap.
 ---
 
 *Requirements defined: 2026-05-25*
-*Last updated: 2026-05-25 after roadmap creation*
+*Last updated: 2026-05-26 after Plan 06-01*
