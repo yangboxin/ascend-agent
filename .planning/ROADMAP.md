@@ -57,7 +57,7 @@
 | 4. Reproduction Capability | v1.0 | 5/5 | Complete | 2026-05-25 |
 | 5. Verification &闭环 | v1.0 | 3/3 | Complete | 2026-05-25 |
 | 6. Provider Routing Foundation | v1.1 | 2/2 | Complete   | 2026-05-26 |
-| 7. Chinese Model Integration | v1.1 | 0/0 | Not started | - |
+| 7. Chinese Model Integration | v1.1 | 1/2 | In Progress|  |
 | 8. Multi-Repo Support | v1.1 | 0/0 | Not started | - |
 | 9. Provider & Multi-Repo Testing | v1.1 | 0/0 | Not started | - |
 
