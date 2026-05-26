@@ -143,25 +143,36 @@ class VerificationEngine:
             result_json = await exec_shell(command, timeout=self._settings.test_timeout)
             duration = time.monotonic() - start
 
-            result = json.loads(result_json)
+            shell_result = json.loads(result_json)
 
-            exit_code = result.get("exit_code", -1)
-            summary = result.get("summary", {})
-            report_tests = result.get("tests", [])
+            exit_code = shell_result.get("exit_code", -1)
+            stdout_text = shell_result.get("stdout", "")
+            stderr_text = shell_result.get("stderr", "")
 
-            passed = summary.get("passed", 0)
-            failed = summary.get("failed", 0)
-            errors = summary.get("error", 0)
-            skipped = summary.get("skipped", 0)
-            xfailed = summary.get("xfailed", 0)
-            xpassed = summary.get("xpassed", 0)
+            # Parse pytest --json-report output from stdout
+            # The report is a JSON object with keys: summary, tests, metadata, etc.
+            report_data = {}
+            if stdout_text.strip():
+                try:
+                    report_data = json.loads(stdout_text)
+                except json.JSONDecodeError:
+                    logger.warning("Failed to parse pytest JSON report from stdout: not valid JSON")
+
+            report_summary = report_data.get("summary", {}) if isinstance(report_data, dict) else {}
+            report_tests = report_data.get("tests", []) if isinstance(report_data, dict) else []
+
+            passed = report_summary.get("passed", 0)
+            failed = report_summary.get("failed", 0)
+            errors = report_summary.get("error", report_summary.get("errors", 0))
+            skipped = report_summary.get("skipped", 0)
+            xfailed = report_summary.get("xfailed", 0)
+            xpassed = report_summary.get("xpassed", 0)
             tests_run = passed + failed + errors + skipped + xfailed + xpassed
 
             # Determine status
-            stderr = result.get("stderr", "")
             if errors > 0:
                 status = "error"
-            elif "timed out after" in stderr:
+            elif "timed out after" in stderr_text:
                 status = "timeout"
             elif exit_code != 0:
                 status = "fail"

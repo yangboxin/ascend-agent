@@ -41,26 +41,23 @@ async def run_test(
         })
 
     try:
-        if repo_path is None:
-            from ascend_agent.config import Settings
-
-            settings = Settings()
-            repo_path = settings.repo_path or str(Path.cwd())
-
-        from ascend_agent.diagnosis.router import ModelRouter
+        from ascend_agent.config import Settings
+        from ascend_agent.diagnosis.router import create_router
         from ascend_agent.verification.engine import VerificationEngine
 
-        router = ModelRouter()
-        settings = __import__("ascend_agent.config", fromlist=["Settings"]).Settings()
+        settings = Settings()
         settings.test_timeout = timeout
-        engine = VerificationEngine(router=router, repo_path=repo_path, settings=settings)
+        resolved_repo_path = repo_path or settings.repo_path or str(Path.cwd())
+        router = create_router("openai")
+        engine = VerificationEngine(router=router, repo_path=resolved_repo_path, settings=settings)
         result = await engine.verify(reproduction)
 
         if ctx is not None:
-            ctx.info(
-                f"run_test: status={result.status}, "
-                f"{result.passed} passed, {result.failed} failed"
-            )
+            msg = f"run_test: status={result.status}, {result.passed} passed, {result.failed} failed"
+            if hasattr(ctx, "info") and not hasattr(ctx.info, "__await__"):
+                ctx.info(msg)
+            else:
+                await ctx.info(msg)
 
         return result.model_dump_json()
     except Exception as e:

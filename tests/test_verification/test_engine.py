@@ -70,11 +70,12 @@ class TestVerificationEngine:
         ) as mock_exec:
             mock_exec.return_value = json.dumps({
                 "status": "success",
-                "stdout": "1 passed",
+                "stdout": json.dumps({
+                    "summary": {"passed": 1, "failed": 0, "error": 0},
+                    "tests": [],
+                }),
                 "stderr": "",
                 "exit_code": 0,
-                "summary": {"passed": 1, "failed": 0, "error": 0},
-                "tests": [],
             })
             result = await engine.verify(sample_reproduction)
             assert mock_exec.called

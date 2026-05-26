@@ -1,6 +1,7 @@
 """Integration tests for the verify CLI command."""
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from typer.testing import CliRunner
@@ -10,6 +11,7 @@ from ascend_agent.cli.verify import verify_app
 from ascend_agent.diagnosis.models import VerificationResult
 
 runner = CliRunner()
+_FIXTURE_DIR = Path(__file__).resolve().parent.parent / "fixtures"
 
 
 def _make_pass_result():
@@ -44,9 +46,9 @@ def test_verify_help():
 
 def test_verify_run_with_fixture(tmp_path):
     """CLI loads fixture, runs engine (mocked), produces output."""
-    src_path = "tests/fixtures/sample_reproduction.json"
+    src_path = _FIXTURE_DIR / "sample_reproduction.json"
     fixture_path = tmp_path / "sample_reproduction.json"
-    fixture_path.write_text(open(src_path).read())
+    fixture_path.write_text(src_path.read_text())
 
     pass_result = _make_pass_result()
 
@@ -65,9 +67,9 @@ def test_verify_run_with_fixture(tmp_path):
 
 def test_verify_output_json(tmp_path):
     """--output flag writes VerificationResult JSON to file."""
-    src_path = "tests/fixtures/sample_reproduction.json"
+    src_path = _FIXTURE_DIR / "sample_reproduction.json"
     fixture_path = tmp_path / "sample_reproduction.json"
-    fixture_path.write_text(open(src_path).read())
+    fixture_path.write_text(src_path.read_text())
 
     output_path = tmp_path / "verify_result.json"
     pass_result = _make_pass_result()

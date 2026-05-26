@@ -62,6 +62,8 @@ def reproduce_run(
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=1)
 
+    # Set repo_path on result so downstream consumers (e.g., verify) know which repo was used
+    result.repo_path = repo_path
     status_color = "green" if result.status == "success" else "red"
     console.print(f"\n[bold]Reproduction Result[/bold]")
     console.print(f"Status: [{status_color}]{result.status}[/{status_color}]")

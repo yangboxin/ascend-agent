@@ -60,7 +60,11 @@ class Settings(BaseSettings):
     def model_post_init(self, __context):
         self.python_version = sys.version
         self.platform = sys.platform
-        self.env_vars = dict(os.environ)
+        # Store only non-sensitive env vars to avoid leaking API keys
+        self.env_vars = {
+            k: v for k, v in os.environ.items()
+            if not any(sensitive in k.upper() for sensitive in ("KEY", "SECRET", "TOKEN", "PASSWORD", "AUTH"))
+        }
 
 
 settings = Settings()

@@ -60,6 +60,8 @@ class ReproductionEngine:
             logger.warning("Venve detection failed: %s", exc)
             venv_env = {}
 
+        from ascend_agent.tools.shell_exec import exec_shell
+
         for i, hypothesis in enumerate(diagnosis.hypotheses):
             command = ""
             try:
@@ -73,17 +75,7 @@ class ReproductionEngine:
                         logger.warning(
                             "Path traversal blocked: %s", evidence.file_path
                         )
-                        return ReproductionResult(
-                            status="error",
-                            command=command,
-                            stderr=f"Path outside repo boundary: {evidence.file_path}",
-                            exit_code=-1,
-                            duration_seconds=0.0,
-                            hypothesis_id_tested=i,
-                            files_changed=[],
-                        )
-
-                from ascend_agent.tools.shell_exec import exec_shell
+                        continue
 
                 start = time.monotonic()
                 result_json = await exec_shell(
@@ -92,18 +84,20 @@ class ReproductionEngine:
                 duration = time.monotonic() - start
 
                 result = json.loads(result_json)
+                exec_status = result.get("status", "error")
 
                 logger.info(
                     "Reproducing hypothesis %d/%d: %s → %s (%.2fs)",
                     i + 1,
                     len(diagnosis.hypotheses),
                     command[:80],
-                    result.get("status", "unknown"),
+                    exec_status,
                     duration,
                 )
 
+                # Return the first hypothesis that produced a runnable command
                 return ReproductionResult(
-                    status=result.get("status", "error"),
+                    status=exec_status,
                     command=command,
                     stdout=result.get("stdout", ""),
                     stderr=result.get("stderr", ""),
@@ -114,21 +108,13 @@ class ReproductionEngine:
                 )
 
             except Exception as exc:
-                logger.error("Reproduction failed: %s", exc)
-                return ReproductionResult(
-                    status="error",
-                    command=command,
-                    stderr=str(exc),
-                    exit_code=-1,
-                    duration_seconds=0.0,
-                    hypothesis_id_tested=i,
-                    files_changed=[],
-                )
+                logger.error("Reproduction failed for hypothesis %d/%d: %s", i + 1, len(diagnosis.hypotheses), exc)
+                continue
 
         return ReproductionResult(
             status="error",
             command="",
-            stderr="No actionable commands could be constructed from hypotheses",
+            stderr="No hypotheses could be executed",
             exit_code=-1,
             duration_seconds=0.0,
             hypothesis_id_tested=-1,
@@ -173,22 +159,3 @@ class ReproductionEngine:
             return str(resolved).startswith(str(self._repo_path))
         except (ValueError, OSError):
             return False
-
-    async def _check_dependencies(self) -> list[str]:
-        """Check that required dependencies are available (D-13).
-
-        Returns list of missing dependency names. Empty = all present.
-        """
-        missing = []
-        try:
-            proc = await asyncio.create_subprocess_shell(
-                "python --version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            await asyncio.wait_for(proc.wait(), timeout=10)
-            if proc.returncode != 0:
-                missing.append("python")
-        except Exception:
-            missing.append("python")
-        return missing

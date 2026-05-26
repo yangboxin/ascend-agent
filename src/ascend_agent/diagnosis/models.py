@@ -199,6 +199,9 @@ class ReproductionResult(BaseModel):
     hypothesis_id_tested: int = Field(
         ge=-1, description="Index of hypothesis this test addresses (-1 if none)"
     )
+    repo_path: str = Field(
+        default="", description="Repo-absolute path to the target repository"
+    )
     files_changed: list[str] = Field(
         default_factory=list,
         description="List of repo-relative paths to files modified during reproduction",

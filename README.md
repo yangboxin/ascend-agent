@@ -94,55 +94,91 @@ Interactive mode provides a prompt where you can:
 ascend-agent diagnose run /path/to/repo --trace error.log --output context.json
 ```
 
-### reproduce (stub)
+### reproduce — Reproduce diagnosed issues as shell commands
 
 ```bash
 ascend-agent reproduce run diagnosis.json
+ascend-agent reproduce run diagnosis.json --output reproduction.json
 ```
 
-Not yet implemented — planned for Phase 4.
+Evaluates each diagnosis hypothesis, constructs reproduction commands (pytest or python) from the evidence file paths, executes them locally or via SSH (ASCEND_SSH_HOST), and displays structured results (status, command, exit code, stdout/stderr, duration).
 
-### fix (stub)
+### fix — Generate and review code fixes
 
 ```bash
 ascend-agent fix run diagnosis.json
+ascend-agent fix run diagnosis.json --output accepted.json
 ```
 
-Not yet implemented — planned for Phase 3.
+Generates fix suggestions for each diagnosis hypothesis using the LLM. Presents an interactive review workflow (Accept/Skip/Reject per suggestion with Rich syntax-highlighted diffs), applies accepted fixes via search-and-replace with `.bak` backup, and optionally saves accepted fixes as JSON.
+
+### verify — Run tests to verify fixes
+
+```bash
+ascend-agent verify run reproduction.json
+ascend-agent verify run reproduction.json --output verification.json
+```
+
+Auto-detects the test framework (pytest), maps changed source files to corresponding test files, executes only relevant tests via `pytest --json-report`, and produces a structured pass/fail report with per-test details.
+
+### Provider selection
+
+All commands support `--provider` for LLM provider selection:
+
+```bash
+# Use DeepSeek
+ascend-agent --provider deepseek diagnose run /path/to/repo --trace-text "Error"
+
+# Per-command override
+ascend-agent diagnose run --provider qwen /path/to/repo --trace-text "Error"
+```
+
+Supported providers: `openai` (default), `deepseek`, `qwen`. Configure via `ASCEND_*_API_KEY` env vars.
 
 ## Project Structure
 
 ```
 ascend-agent/
-├── pyproject.toml              # Project metadata, deps, entry point
+├── pyproject.toml                  # Project metadata, deps, entry point
 ├── src/
 │   └── ascend_agent/
-│       ├── __init__.py          # Package init (__version__)
-│       ├── __main__.py          # python -m ascend_agent support
-│       ├── main.py              # Console_scripts entry point
-│       ├── config.py            # pydantic-settings (ASCEND_ env prefix)
+│       ├── __init__.py            # Package init (__version__)
+│       ├── __main__.py            # python -m support
+│       ├── main.py                # Console_scripts entry point
+│       ├── config.py              # pydantic-settings (ASCEND_ env prefix)
 │       ├── cli/
-│       │   ├── app.py           # Typer app, callback, sub-typer registration
-│       │   ├── diagnose.py      # diagnose run command (one-shot + REPL)
-│       │   ├── reproduce.py     # Stub (Phase 4)
-│       │   └── fix.py           # Stub (Phase 3)
+│       │   ├── app.py             # Typer app, callback, sub-typer registration
+│       │   ├── diagnose.py        # diagnose run command (one-shot + REPL)
+│       │   ├── fix.py             # fix run command (review workflow + batch apply)
+│       │   ├── reproduce.py       # reproduce run command (local + SSH)
+│       │   └── verify.py          # verify run command (test execution + reporting)
 │       ├── context/
-│       │   ├── models.py        # Pydantic v2 models (ContextDocument, RepoInfo, TraceInfo...)
-│       │   ├── repo.py          # RepoScanner (.gitignore-aware)
-│       │   └── trace.py         # TraceParser (regex, 3 input methods)
+│       │   ├── models.py          # Pydantic models (ContextDocument, RepoInfo, TraceInfo)
+│       │   ├── repo.py            # RepoScanner (.gitignore-aware)
+│       │   └── trace.py           # TraceParser (regex, 3 input methods)
+│       ├── diagnosis/
+│       │   ├── models.py          # All Pydantic models (Evidence, Hypothesis, FixSuggestion, ...)
+│       │   ├── router.py          # ModelRouter, create_router, ProviderConfig
+│       │   ├── engine.py          # Diagnosis engine (LLM-driven search loop)
+│       │   └── fix_engine.py      # Fix generation engine
+│       ├── reproduction/
+│       │   └── engine.py          # Reproduction engine (command construction + execution)
+│       ├── verification/
+│       │   └── engine.py          # Verification engine (test framework detection + execution)
 │       └── tools/
-│           ├── server.py        # FastMCP server with 4 tool registrations
-│           ├── code_search.py   # Code search (rg + Python fallback)
-│           ├── file_edit.py     # Stub (Phase 3)
-│           ├── shell_exec.py    # Stub (Phase 4)
-│           └── test_runner.py   # Stub (Phase 5)
+│           ├── server.py          # FastMCP server with 4 tool registrations
+│           ├── code_search.py     # Code search (ripgrep + Python fallback)
+│           ├── file_edit.py       # Search-and-replace file editing with .bak backup
+│           ├── shell_exec.py      # Shell execution (local + SSH via asyncssh)
+│           └── test_runner.py     # Test execution via VerificationEngine
 └── tests/
-    ├── conftest.py              # Shared fixtures (sample_trace, sample_repo_dir)
-    ├── test_cli.py              # CLI integration tests (CliRunner)
-    ├── test_context.py          # Context builder unit tests (7 tests)
-    └── test_tools/
-        ├── test_server.py       # MCP server tests
-        └── test_code_search.py  # Code search integration tests
+    ├── conftest.py                # Shared fixtures
+    ├── test_cli.py                # CLI integration tests (12 tests)
+    ├── test_context.py            # Context builder unit tests (7 tests)
+    ├── test_diagnosis/            # Engine + router + fix tests (50 tests)
+    ├── test_reproduction/         # Reproduction tests (13 tests)
+    ├── test_tools/                # MCP tool tests (19 tests)
+    └── test_verification/         # Verification tests (19 tests)
 ```
 
 ## Architecture
@@ -150,20 +186,35 @@ ascend-agent/
 The agent uses a layered architecture:
 
 ```
-┌─────────────────────────────────────────────┐
-│  CLI Layer (Typer + Rich)                   │
-│  diagnose | reproduce (stub) | fix (stub)   │
-└──────────────────┬──────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────┐
-│  Context Builder (Pydantic models)          │
-│  RepoScanner + TraceParser → ContextDocument│
-└──────────────────┬──────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────┐
-│  MCP Tool Layer (subprocess, STDIO)         │
-│  code_search (full) + 3 stubs               │
-└─────────────────────────────────────────────┘
+┌───────────────────────────────────────────────┐
+│  CLI Layer (Typer + Rich)                     │
+│  diagnose | fix | reproduce | verify          │
+│  --provider openai|deepseek|qwen              │
+└───────────────────┬───────────────────────────┘
+                    │
+┌───────────────────▼───────────────────────────┐
+│  Engine Layer (4 engines, Pydantic results)   │
+│  Engine | FixEngine | ReproductionEngine      │
+│  VerificationEngine                           │
+└───────────────────┬───────────────────────────┘
+                    │
+┌───────────────────▼───────────────────────────┐
+│  Model Router (create_router + ModelRouter)   │
+│  ProviderConfig | PROVIDER_DEFAULTS           │
+│  .parse() → json.loads fallback on 400        │
+│  openai | deepseek | qwen                     │
+└───────────────────┬───────────────────────────┘
+                    │
+┌───────────────────▼───────────────────────────┐
+│  Context Builder (Pydantic models)            │
+│  RepoScanner + TraceParser → ContextDocument  │
+└───────────────────┬───────────────────────────┘
+                    │
+┌───────────────────▼───────────────────────────┐
+│  MCP Tool Layer (subprocess, STDIO)           │
+│  code_search | edit_file | exec_shell         │
+│  run_test (local + SSH via asyncssh)          │
+└───────────────────────────────────────────────┘
 ```
 
 Key design decisions:
@@ -200,19 +251,25 @@ python3 -m ascend_agent.tools.server
 | Phase | Name | Status |
 |-------|------|--------|
 | 1 | Architecture Foundation | ✅ Complete |
-| 2 | Diagnosis Engine | ⏳ Pending |
-| 3 | Fix Generation | ⏳ Pending |
-| 4 | Reproduction Capability | ⏳ Pending |
-| 5 | Verification &闭环 | ⏳ Pending |
+| 2 | Diagnosis Engine | ✅ Complete |
+| 3 | Fix Generation | ✅ Complete |
+| 4 | Reproduction Capability | ✅ Complete |
+| 5 | Verification &闭环 | ✅ Complete |
+| 6 | Provider Routing Foundation | ✅ Complete |
+| 7 | Chinese Model Integration | ✅ Complete |
+| 8 | Multi-Repo Support | ⏳ Planned |
+| 9 | Provider & Multi-Repo Testing | ⏳ Planned |
 
 ## Architecture Constraints
 
 - `print()` must never be used in MCP tools — stdout is the STDIO transport channel
 - Use `ctx.info()` or `stderr` for logging in tool functions
 - Stack trace parsing is regex-based (no AST), one trace at a time
-- Code search restricted to `.py` files in Phase 1
-- No SSH/remote support (Phase 4)
-- All fix suggestions require human review before application
+- Code search restricted to `.py` files
+- SSH/remote support via `ASCEND_SSH_HOST` env var (asyncssh, known_hosts=None for internal test machines)
+- All fix suggestions require human review before application (review workflow)
+- Provider routing via `ASCEND_*_API_KEY` env vars and `--provider` flag
+- Structured output fallback: `.parse()` → `json.loads` on 400 errors (transparent to callers)
 
 ## License
 

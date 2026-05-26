@@ -46,7 +46,7 @@ def verify_run(
         console.print(f"[red]Error:[/red] Failed to parse reproduction JSON: {e}")
         raise typer.Exit(code=1)
 
-    repo_path = settings.repo_path or "."
+    repo_path = reproduction_result.repo_path or settings.repo_path or "."
     resolved_provider = provider or (ctx.obj.get("provider", "openai") if ctx.obj else "openai")
 
     try:

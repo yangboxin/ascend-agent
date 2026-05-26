@@ -45,7 +45,7 @@ def _read_function_body(
         or *None* if the file cannot be read.
     """
     try:
-        with open(file_path, "r") as f:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
             source = f.read()
         lines = source.splitlines()
     except (FileNotFoundError, OSError):
@@ -279,7 +279,6 @@ class Engine:
                 iterations_used=iterations_used,
             )
 
-        result.iterations_used = iterations_used
         return result
 
     def _execute_search(self, pattern: str) -> dict:
@@ -292,9 +291,15 @@ class Engine:
         from ascend_agent.tools.code_search import search_code
 
         try:
-            result_str = asyncio.run(
-                search_code(pattern, str(self._repo_path_resolved))
-            )
+            # Safely run async code: prefer asyncio.run() unless already in an event loop
+            async def _do_search():
+                return await search_code(pattern, str(self._repo_path_resolved))
+            try:
+                result_str = asyncio.run(_do_search())
+            except RuntimeError:
+                # Already in a running event loop — create a new task and wait
+                loop = asyncio.get_running_loop()
+                result_str = loop.run_until_complete(asyncio.ensure_future(_do_search()))
             # Try to enrich with function body context
             enriched = self._enrich_with_function_bodies(
                 result_str, pattern

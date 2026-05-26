@@ -21,7 +21,6 @@ def main(
     ctx.obj = {"provider": provider or "openai"}
 
 
-from ascend_agent.diagnosis.router import create_router
 from ascend_agent.cli.diagnose import diagnose_app
 from ascend_agent.cli.reproduce import reproduce_app
 from ascend_agent.cli.fix import fix_app
