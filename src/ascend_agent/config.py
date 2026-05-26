@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import sys
 
@@ -18,6 +20,16 @@ class Settings(BaseSettings):
     ssh_key_path: str = Field(default="", description="Path to SSH private key file (fallback if agent unavailable)")
     shell_timeout: int = Field(default=60, ge=1, description="Default timeout in seconds for shell commands")
     test_timeout: int = Field(default=300, ge=1, description="Default timeout in seconds for test execution")
+
+    # Phase 6: Provider config fields
+    openai_api_key: str = Field(
+        default="",
+        description="OpenAI API key (env: ASCEND_OPENAI_API_KEY, falls back to OPENAI_API_KEY)",
+    )
+    openai_base_url: str = Field(
+        default="",
+        description="OpenAI-compatible base URL override (env: ASCEND_OPENAI_BASE_URL)",
+    )
 
     def model_post_init(self, __context):
         self.python_version = sys.version
