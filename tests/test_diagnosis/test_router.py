@@ -11,6 +11,7 @@ def test_router_missing_key(monkeypatch):
 
 def test_router_uses_default_model(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr("openai.OpenAI.__init__", lambda self, **kwargs: None)
     from ascend_agent.diagnosis.router import ModelRouter
 
     router = ModelRouter()
@@ -20,6 +21,7 @@ def test_router_uses_default_model(monkeypatch):
 def test_router_uses_env_model(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
     monkeypatch.setenv("ASCEND_DIAGNOSIS_MODEL", "gpt-4o-mini")
+    monkeypatch.setattr("openai.OpenAI.__init__", lambda self, **kwargs: None)
     from ascend_agent.diagnosis.router import ModelRouter
 
     router = ModelRouter()
@@ -28,7 +30,90 @@ def test_router_uses_env_model(monkeypatch):
 
 def test_router_uses_explicit_model(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr("openai.OpenAI.__init__", lambda self, **kwargs: None)
     from ascend_agent.diagnosis.router import ModelRouter
 
     router = ModelRouter(model="gpt-4o-2024-08-06")
     assert router._model == "gpt-4o-2024-08-06"
+
+
+def test_provider_config_defaults():
+    from ascend_agent.diagnosis.router import ProviderConfig
+
+    config = ProviderConfig(base_url="https://test.com/v1", api_key="sk-test", default_model="gpt-4o")
+    assert config.base_url == "https://test.com/v1"
+    assert config.api_key == "sk-test"
+    assert config.default_model == "gpt-4o"
+
+
+def test_create_router_default_openai(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr("openai.OpenAI.__init__", lambda self, **kwargs: None)
+    from ascend_agent.diagnosis.router import create_router
+
+    router = create_router("openai")
+    assert router is not None
+    assert router._model == "gpt-4o"
+
+
+def test_create_router_with_base_url(monkeypatch):
+    monkeypatch.setenv("ASCEND_OPENAI_API_KEY", "sk-custom")
+    monkeypatch.setenv("ASCEND_OPENAI_BASE_URL", "https://custom.api.com/v1")
+    from ascend_agent.diagnosis.router import create_router
+
+    captured = {}
+    def mock_openai_init(self, **kwargs):
+        captured.update(kwargs)
+    monkeypatch.setattr("openai.OpenAI.__init__", mock_openai_init)
+
+    router = create_router("openai")
+    assert captured.get("base_url") == "https://custom.api.com/v1"
+
+
+def test_create_router_prefers_ascend_key(monkeypatch):
+    monkeypatch.setenv("ASCEND_OPENAI_API_KEY", "sk-ascend-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-key")
+    from ascend_agent.diagnosis.router import create_router
+
+    captured = {}
+    def mock_openai_init(self, **kwargs):
+        captured.update(kwargs)
+    monkeypatch.setattr("openai.OpenAI.__init__", mock_openai_init)
+
+    router = create_router("openai")
+    assert captured.get("api_key") == "sk-ascend-key"
+
+
+def test_create_router_non_openai_missing_key(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ASCEND_DEEPSEEK_API_KEY", raising=False)
+    from ascend_agent.diagnosis.router import create_router
+
+    try:
+        create_router("deepseek")
+        assert False, "Should have raised ValueError"
+    except ValueError as e:
+        assert "ASCEND_DEEPSEEK_API_KEY" in str(e)
+
+
+def test_create_router_non_openai(monkeypatch):
+    monkeypatch.setenv("ASCEND_DEEPSEEK_API_KEY", "sk-deepseek")
+    from ascend_agent.diagnosis.router import create_router
+
+    captured = {}
+    def mock_openai_init(self, **kwargs):
+        captured.update(kwargs)
+    monkeypatch.setattr("openai.OpenAI.__init__", mock_openai_init)
+
+    router = create_router("deepseek")
+    assert captured.get("api_key") == "sk-deepseek"
+    assert captured.get("base_url") == "https://api.openai.com/v1"
+
+
+def test_model_router_backward_compat(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr("openai.OpenAI.__init__", lambda self, **kwargs: None)
+    from ascend_agent.diagnosis.router import ModelRouter
+
+    router = ModelRouter()
+    assert router._model == "gpt-4o"

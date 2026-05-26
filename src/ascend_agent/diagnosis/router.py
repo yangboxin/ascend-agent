@@ -1,10 +1,66 @@
+from __future__ import annotations
+
 import logging
 import os
 
 from openai import OpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
+
+
+class ProviderConfig(BaseModel):
+    """Configuration for a single LLM provider (OpenAI-compatible API)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    base_url: str = Field(description="Base URL for the OpenAI-compatible API endpoint")
+    api_key: str = Field(description="API key for this provider")
+    default_model: str = Field(description="Default model name for this provider")
+
+
+def create_router(provider: str = "openai") -> ModelRouter:
+    """Create a configured ModelRouter for the given provider.
+
+    Resolves provider-specific env vars (ASCEND_{PROVIDER}_API_KEY,
+    ASCEND_{PROVIDER}_BASE_URL) and constructs a ProviderConfig.
+
+    Default provider "openai" falls back to OPENAI_API_KEY for
+    backward compatibility (PROV-04).
+
+    Args:
+        provider: Provider name, e.g. "openai" or "deepseek".
+
+    Returns:
+        A configured ModelRouter instance.
+
+    Raises:
+        ValueError: If required API key is missing.
+    """
+    prefix = f"ASCEND_{provider.upper()}"
+    api_key = os.environ.get(f"{prefix}_API_KEY")
+    base_url = os.environ.get(f"{prefix}_BASE_URL")
+
+    if provider == "openai":
+        api_key = api_key or os.environ.get("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "ASCEND_OPENAI_API_KEY or OPENAI_API_KEY is required. "
+                "Set one of these environment variables."
+            )
+    else:
+        if not api_key:
+            raise ValueError(
+                f"{prefix}_API_KEY is required for provider '{provider}'. "
+                f"Set the {prefix}_API_KEY environment variable."
+            )
+
+    config = ProviderConfig(
+        base_url=base_url or "https://api.openai.com/v1",
+        api_key=api_key,
+        default_model=os.environ.get(f"{prefix}_DEFAULT_MODEL", "gpt-4o"),
+    )
+    return ModelRouter(config=config)
 
 
 class ModelRouter:
@@ -16,17 +72,31 @@ class ModelRouter:
 
     _DEFAULT_MODEL = "gpt-4o"
 
-    def __init__(self, model: str | None = None, api_key: str | None = None):
-        api_key = api_key or os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "OPENAI_API_KEY is required for diagnosis. "
-                "Set the OPENAI_API_KEY environment variable."
+    def __init__(
+        self,
+        model: str | None = None,
+        api_key: str | None = None,
+        config: ProviderConfig | None = None,
+    ):
+        if config is not None:
+            # New code path: use ProviderConfig
+            self._client = OpenAI(
+                api_key=config.api_key,
+                base_url=config.base_url,
             )
-        self._client = OpenAI(api_key=api_key)
-        self._model = model or os.environ.get(
-            "ASCEND_DIAGNOSIS_MODEL", self._DEFAULT_MODEL
-        )
+            self._model = config.default_model
+        else:
+            # Backward-compatible code path (deprecated)
+            api_key = api_key or os.environ.get("OPENAI_API_KEY")
+            if not api_key:
+                raise ValueError(
+                    "OPENAI_API_KEY is required for diagnosis. "
+                    "Set the OPENAI_API_KEY environment variable."
+                )
+            self._client = OpenAI(api_key=api_key)
+            self._model = model or os.environ.get(
+                "ASCEND_DIAGNOSIS_MODEL", self._DEFAULT_MODEL
+            )
         logger.info("ModelRouter initialized (model: %s)", self._model)
 
     def completion(
