@@ -23,3 +23,15 @@ async def test_search_empty_dir(tmp_path):
     from ascend_agent.tools.code_search import search_code
     result = await search_code("anything", str(tmp_path))
     assert "No matches found" in result
+
+
+@pytest.mark.asyncio
+async def test_search_includes_config_files(tmp_path):
+    from ascend_agent.tools.code_search import search_code
+
+    (tmp_path / "config.yaml").write_text("hidden_size: 8192\n", encoding="utf-8")
+
+    result = await search_code("hidden_size", str(tmp_path))
+
+    assert "config.yaml" in result
+    assert "hidden_size" in result

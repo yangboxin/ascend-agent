@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 from ascend_agent.diagnosis.engine import Engine, _read_function_body
+from ascend_agent.context.models import ConfigEnv, ContextDocument, RepoInfo, TraceEntry, TraceInfo
 from ascend_agent.diagnosis.models import (
     DiagnosisResult,
     SearchAction,
@@ -66,6 +67,56 @@ class TestEngine:
         engine = Engine(router=mock_router, repo_path=str(tmp_path))
         assert engine._router is mock_router
         assert engine._repo_path_resolved == tmp_path.resolve()
+
+    def test_initial_llm_call_includes_trace_frame_source_context(self, mock_router, tmp_path: Path):
+        """Trace frame source is collected before asking the LLM for searches."""
+        source_path = tmp_path / "vllm" / "engine" / "async_llm_engine.py"
+        source_path.parent.mkdir(parents=True)
+        source_path.write_text(
+            "class Engine:\n"
+            "    async def _run_engine(self, model_input):\n"
+            "        hidden_size = model_input.hidden_size\n"
+            "        if hidden_size != 4096:\n"
+            "            raise ValueError('Invalid dimension')\n"
+            "        return hidden_size\n",
+            encoding="utf-8",
+        )
+        trace = TraceInfo(
+            error_type="ValueError",
+            error_message="Invalid dimension",
+            frames=[
+                TraceEntry(
+                    file="/home/user/vllm-ascend/vllm/engine/async_llm_engine.py",
+                    line=5,
+                    function="_run_engine",
+                    text='File "/home/user/vllm-ascend/vllm/engine/async_llm_engine.py", line 5, in _run_engine',
+                )
+            ],
+            raw_text="ValueError: Invalid dimension",
+        )
+        context = ContextDocument(
+            repo=RepoInfo(
+                path=str(tmp_path),
+                language="python",
+                file_count=1,
+                structure=["vllm/engine/async_llm_engine.py"],
+            ),
+            trace=trace,
+            config_env=ConfigEnv(),
+        )
+        mock_router.completion.side_effect = [
+            SearchDecision(action="hypothesize", reasoning="source frame is enough"),
+            DiagnosisResult(hypotheses=[], errors=[], iterations_used=1),
+        ]
+
+        result = Engine(router=mock_router, repo_path=str(tmp_path)).diagnose(context)
+
+        assert isinstance(result, DiagnosisResult)
+        first_messages = mock_router.completion.call_args_list[0].kwargs["messages"]
+        combined = "\n".join(message["content"] for message in first_messages)
+        assert "Source Context From Stack Trace" in combined
+        assert "vllm/engine/async_llm_engine.py:5" in combined
+        assert "raise ValueError('Invalid dimension')" in combined
 
     def test_search_loop_hypothesizes_after_searches(self, mock_router, sample_context_doc, tmp_path: Path):
         """Engine search loop iterates with mock LLM: searches then hypothesizes."""

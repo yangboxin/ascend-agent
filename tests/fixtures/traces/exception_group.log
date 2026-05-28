@@ -1,0 +1,15 @@
+  + Exception Group Traceback (most recent call last):
+  |   File "/repo/service.py", line 20, in run_all
+  |     await group()
+  | ExceptionGroup: worker failures (2 sub-exceptions)
+  +-+---------------- 1 ----------------
+    | Traceback (most recent call last):
+    |   File "/repo/worker.py", line 8, in run
+    |     raise ValueError("bad shard")
+    | ValueError: bad shard
+    +---------------- 2 ----------------
+    | Traceback (most recent call last):
+    |   File "/repo/worker.py", line 9, in run
+    |     raise RuntimeError("device lost")
+    | RuntimeError: device lost
+    +------------------------------------

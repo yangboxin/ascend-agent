@@ -1,0 +1,13 @@
+Traceback (most recent call last):
+  File "/repo/app.py", line 10, in load_config
+    return int(raw_value)
+ValueError: invalid literal for int() with base 10: 'fast'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/repo/cli.py", line 5, in <module>
+    load_config()
+  File "/repo/app.py", line 12, in load_config
+    raise RuntimeError("invalid worker count") from exc
+RuntimeError: invalid worker count

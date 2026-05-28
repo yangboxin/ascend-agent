@@ -1,0 +1,4 @@
+E   AssertionError: assert 1 == 2
+E    +  where 1 = normalize_shape((1, 2))
+
+FAILED tests/test_shapes.py::test_normalize_shape - AssertionError: assert 1 == 2

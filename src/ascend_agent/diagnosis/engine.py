@@ -20,6 +20,7 @@ from ascend_agent.diagnosis.router import ModelRouter
 logger = logging.getLogger(__name__)
 
 MAX_ITERATIONS = 3
+MAX_TRACE_SOURCE_SNIPPETS = 5
 
 # ---------------------------------------------------------------------------
 # Utility: function body extraction
@@ -80,6 +81,93 @@ def _format_lines(lines: list[str], start: int, end: int) -> str:
     return "\n".join(
         f"{i + 1}:{lines[i]}" for i in range(start, end)
     )
+
+
+def _relative_to_repo(path: Path, repo_path: Path) -> str:
+    try:
+        return path.relative_to(repo_path).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _resolve_frame_file(frame_file: str | None, repo_path: Path) -> Path | None:
+    """Resolve a trace frame path into a file inside the repository.
+
+    Tracebacks often contain absolute paths from another checkout or container.
+    If the exact path is unavailable, try suffixes against the current repo.
+    """
+    if not frame_file:
+        return None
+
+    raw_path = Path(frame_file)
+    candidates: list[Path] = []
+
+    if raw_path.is_absolute():
+        try:
+            resolved = raw_path.resolve()
+            if resolved.exists() and str(resolved).startswith(str(repo_path)):
+                return resolved
+        except OSError:
+            pass
+        parts = raw_path.parts
+        for idx in range(1, len(parts)):
+            suffix = Path(*parts[idx:])
+            candidates.append(repo_path / suffix)
+    else:
+        candidates.append(repo_path / raw_path)
+
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        if resolved.exists() and str(resolved).startswith(str(repo_path)):
+            return resolved
+
+    basename_matches = list(repo_path.rglob(raw_path.name))
+    existing_matches = [
+        match.resolve()
+        for match in basename_matches
+        if match.is_file() and str(match.resolve()).startswith(str(repo_path))
+    ]
+    if len(existing_matches) == 1:
+        return existing_matches[0]
+
+    return None
+
+
+def _collect_trace_source_context(context_doc, repo_path: Path) -> str:
+    """Read source snippets for stack frames before the first LLM call."""
+    trace = getattr(context_doc, "trace", None)
+    if not trace or not getattr(trace, "frames", None):
+        return ""
+
+    snippets: list[str] = []
+    seen: set[tuple[str, int]] = set()
+    for frame in trace.frames:
+        if frame.line is None:
+            continue
+        resolved = _resolve_frame_file(frame.file, repo_path)
+        if resolved is None:
+            continue
+        key = (resolved.as_posix(), frame.line)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        snippet = _read_function_body(str(resolved), frame.line)
+        if not snippet:
+            continue
+        rel_path = _relative_to_repo(resolved, repo_path)
+        snippets.append(
+            f"--- {rel_path}:{frame.line} in {frame.function or '?'} ---\n{snippet}"
+        )
+        if len(snippets) >= MAX_TRACE_SOURCE_SNIPPETS:
+            break
+
+    if not snippets:
+        return ""
+    return "Source Context From Stack Trace:\n" + "\n\n".join(snippets)
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +266,11 @@ class Engine:
             {"role": "system", "content": _build_system_prompt()},
             {"role": "user", "content": _build_user_prompt(context_doc)},
         ]
+        trace_source_context = _collect_trace_source_context(
+            context_doc, self._repo_path_resolved
+        )
+        if trace_source_context:
+            messages.append({"role": "user", "content": trace_source_context})
         search_history: list[dict] = []
         iterations_used = 0
 

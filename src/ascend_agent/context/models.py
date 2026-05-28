@@ -27,12 +27,23 @@ class TraceEntry(BaseModel):
     text: str
 
 
+class TraceCause(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    error_type: str | None = Field(default=None)
+    error_message: str | None = Field(default=None)
+    frames: list[TraceEntry] = Field(default_factory=list)
+
+
 class TraceInfo(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     error_type: str | None = Field(default=None)
     error_message: str | None = Field(default=None)
     frames: list[TraceEntry] = Field(default_factory=list)
+    causes: list[TraceCause] = Field(default_factory=list)
+    runtime_signals: dict[str, str] = Field(default_factory=dict)
+    parse_warnings: list[str] = Field(default_factory=list)
     raw_text: str
 
 
