@@ -27,11 +27,45 @@ PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
 }
 
 
+def _resolve_provider_config(provider: str) -> tuple[str, str, str]:
+    """Resolve base_url, api_key, default_model for a provider.
+    
+    Priority: env vars > config file > built-in defaults.
+    Returns (base_url, api_key, default_model).
+    """
+    prefix = f"ASCEND_{provider.upper()}"
+
+    api_key = os.environ.get(f"{prefix}_API_KEY")
+    base_url = os.environ.get(f"{prefix}_BASE_URL")
+    default_model = os.environ.get(f"{prefix}_DEFAULT_MODEL")
+
+    # Fill gaps from config file
+    if not api_key or not base_url or not default_model:
+        try:
+            from ascend_agent.cli.config_manager import ConfigManager
+            pc = ConfigManager().get_provider(provider)
+            if pc:
+                api_key = api_key or pc.api_key or None
+                base_url = base_url or pc.base_url
+                default_model = default_model or pc.default_model
+        except Exception:
+            pass
+
+    # Fall back to built-in defaults
+    builtin = PROVIDER_DEFAULTS.get(provider, {})
+    base_url = base_url or builtin.get("base_url", "https://api.openai.com/v1")
+    default_model = default_model or builtin.get("default_model", "gpt-4o")
+
+    return base_url, api_key or None, default_model
+
+
 def create_router(provider: str = "openai") -> ModelRouter:
     """Create a configured ModelRouter for the given provider.
 
-    Resolves provider-specific env vars (ASCEND_{PROVIDER}_API_KEY,
-    ASCEND_{PROVIDER}_BASE_URL) and constructs a ProviderConfig.
+    Resolves provider config from (in priority order):
+      1. Environment variables (ASCEND_{PROVIDER}_*)
+      2. Config file (~/.config/ascend-agent/providers.json)
+      3. Built-in defaults
 
     Default provider "openai" falls back to OPENAI_API_KEY for
     backward compatibility (PROV-04).
@@ -45,9 +79,7 @@ def create_router(provider: str = "openai") -> ModelRouter:
     Raises:
         ValueError: If required API key is missing.
     """
-    prefix = f"ASCEND_{provider.upper()}"
-    api_key = os.environ.get(f"{prefix}_API_KEY")
-    base_url = os.environ.get(f"{prefix}_BASE_URL")
+    base_url, api_key, default_model = _resolve_provider_config(provider)
 
     if provider == "openai":
         api_key = api_key or os.environ.get("OPENAI_API_KEY")
@@ -59,14 +91,15 @@ def create_router(provider: str = "openai") -> ModelRouter:
     else:
         if not api_key:
             raise ValueError(
-                f"{prefix}_API_KEY is required for provider '{provider}'. "
-                f"Set the {prefix}_API_KEY environment variable."
+                f"ASCEND_{provider.upper()}_API_KEY is required for provider '{provider}'. "
+                f"Set the ASCEND_{provider.upper()}_API_KEY environment variable "
+                "or configure the provider via /models add."
             )
 
     config = ProviderConfig(
-        base_url=base_url or PROVIDER_DEFAULTS.get(provider, {}).get("base_url", "https://api.openai.com/v1"),
+        base_url=base_url,
         api_key=api_key,
-        default_model=os.environ.get(f"{prefix}_DEFAULT_MODEL", PROVIDER_DEFAULTS.get(provider, {}).get("default_model", "gpt-4o")),
+        default_model=default_model,
     )
     return ModelRouter(config=config)
 

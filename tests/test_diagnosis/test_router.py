@@ -87,6 +87,10 @@ def test_create_router_prefers_ascend_key(monkeypatch):
 def test_create_router_non_openai_missing_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("ASCEND_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "ascend_agent.cli.config_manager.ConfigManager.get_provider",
+        lambda self, name: None,
+    )
     from ascend_agent.diagnosis.router import create_router
 
     try:
@@ -107,7 +111,7 @@ def test_create_router_non_openai(monkeypatch):
 
     router = create_router("deepseek")
     assert captured.get("api_key") == "sk-deepseek"
-    assert captured.get("base_url") == "https://api.openai.com/v1"
+    assert captured.get("base_url") == "https://api.deepseek.com/v1"
 
 
 def test_model_router_backward_compat(monkeypatch):
@@ -172,6 +176,10 @@ def test_create_router_qwen_defaults(monkeypatch):
 def test_create_router_deepseek_missing_key(monkeypatch):
     monkeypatch.delenv("ASCEND_DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "ascend_agent.cli.config_manager.ConfigManager.get_provider",
+        lambda self, name: None,
+    )
     from ascend_agent.diagnosis.router import create_router
 
     try:
@@ -184,6 +192,10 @@ def test_create_router_deepseek_missing_key(monkeypatch):
 def test_create_router_qwen_missing_key(monkeypatch):
     monkeypatch.delenv("ASCEND_QWEN_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "ascend_agent.cli.config_manager.ConfigManager.get_provider",
+        lambda self, name: None,
+    )
     from ascend_agent.diagnosis.router import create_router
 
     try:

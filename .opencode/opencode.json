@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "read": {
+      "/Users/ybx/ascend-agent/.opencode/get-shit-done/*": "allow"
+    },
+    "external_directory": {
+      "/Users/ybx/ascend-agent/.opencode/get-shit-done/*": "allow"
+    }
+  }
+}

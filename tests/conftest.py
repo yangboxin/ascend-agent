@@ -3,6 +3,18 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _dummy_api_key(monkeypatch: pytest.MonkeyPatch):
+    """Ensure dummy API keys are available for all tests.
+    
+    Tests that explicitly test "missing API key" behavior
+    should call monkeypatch.delenv() themselves.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-dummy-key")
+    monkeypatch.setenv("ASCEND_DEEPSEEK_API_KEY", "sk-test-dummy-key")
+    monkeypatch.setenv("ASCEND_QWEN_API_KEY", "sk-test-dummy-key")
+
+
 @pytest.fixture(scope="session")
 def sample_trace():
     return (
