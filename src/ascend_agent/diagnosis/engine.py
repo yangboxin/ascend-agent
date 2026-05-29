@@ -8,10 +8,12 @@ code_search tool for source code lookups, reads function bodies at
 import asyncio
 import ast
 import logging
+import re
 from pathlib import Path
 
 from ascend_agent.diagnosis.models import (
     DiagnosisResult,
+    Hypothesis,
     PartialFailure,
     SearchDecision,
 )
@@ -168,6 +170,90 @@ def _collect_trace_source_context(context_doc, repo_path: Path) -> str:
     if not snippets:
         return ""
     return "Source Context From Stack Trace:\n" + "\n\n".join(snippets)
+
+
+def _normalize_evidence_snippet(snippet: str) -> str:
+    """Normalize LLM snippets for comparison against source text."""
+    lines = []
+    for line in snippet.splitlines():
+        lines.append(re.sub(r"^\s*\d+:\s?", "", line).rstrip())
+    return "\n".join(lines).strip()
+
+
+def _snippet_exists_in_source(snippet: str, source: str) -> bool:
+    normalized = _normalize_evidence_snippet(snippet)
+    if not normalized:
+        return False
+    if normalized in source:
+        return True
+
+    source_lines = [line.strip() for line in source.splitlines()]
+    snippet_lines = [line.strip() for line in normalized.splitlines() if line.strip()]
+    return all(line in source_lines for line in snippet_lines)
+
+
+def _validate_evidence_item(evidence, repo_path: Path) -> tuple[bool, str | None]:
+    resolved = _resolve_frame_file(evidence.file_path, repo_path)
+    if resolved is None:
+        return False, "evidence file not found in repository"
+
+    try:
+        source = resolved.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        return False, f"evidence file unreadable: {exc}"
+
+    lines = source.splitlines()
+    if evidence.line_number > len(lines):
+        return False, "evidence line number is outside the file"
+
+    if not _snippet_exists_in_source(evidence.code_snippet, source):
+        return False, "evidence snippet not found in file"
+
+    return True, None
+
+
+def _validate_diagnosis_evidence(
+    result: DiagnosisResult, repo_path: Path
+) -> DiagnosisResult:
+    """Drop hypotheses whose evidence cannot be verified locally."""
+    if not result.hypotheses:
+        return result
+
+    valid_hypotheses: list[Hypothesis] = []
+    errors = list(result.errors)
+    for index, hypothesis in enumerate(result.hypotheses):
+        valid_evidence = []
+        if not hypothesis.evidence:
+            errors.append(
+                PartialFailure(
+                    stage="evidence_validation",
+                    reason="hypothesis has no evidence",
+                    details=f"Hypothesis {index}: {hypothesis.root_cause[:120]}",
+                )
+            )
+            continue
+
+        for evidence in hypothesis.evidence:
+            is_valid, reason = _validate_evidence_item(evidence, repo_path)
+            if is_valid:
+                valid_evidence.append(evidence)
+                continue
+            errors.append(
+                PartialFailure(
+                    stage="evidence_validation",
+                    reason=reason or "invalid evidence",
+                    details=f"{evidence.file_path}:{evidence.line_number}",
+                )
+            )
+
+        if valid_evidence:
+            valid_hypotheses.append(
+                hypothesis.model_copy(update={"evidence": valid_evidence})
+            )
+
+    return result.model_copy(
+        update={"hypotheses": valid_hypotheses, "errors": errors}
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -357,6 +443,9 @@ class Engine:
                 messages=hypothesis_messages,
                 response_model=DiagnosisResult,
                 max_tokens=8192,
+            )
+            result = _validate_diagnosis_evidence(
+                result, self._repo_path_resolved
             )
         except Exception as exc:
             logger.error("Hypothesis generation failed: %s", exc)
