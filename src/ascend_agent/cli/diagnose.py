@@ -17,6 +17,7 @@ from ascend_agent.context.trace import trace_from_file, trace_from_stdin, trace_
 from ascend_agent.diagnosis.engine import Engine
 from ascend_agent.diagnosis.models import DiagnosisOutput, DiagnosisResult, Hypothesis, Evidence, PartialFailure
 from ascend_agent.diagnosis.router import create_router
+from ascend_agent.diagnosis.tool_client import create_tool_client
 
 console = Console()
 diagnose_app = typer.Typer(name="diagnose", help="Diagnose an issue from a stack trace against a code repository")
@@ -82,7 +83,12 @@ def _one_shot_mode(
     console.print("\n[bold cyan]Running diagnosis...[/bold cyan]")
     try:
         router = create_router(provider=provider)
-        engine = Engine(router=router, repo_path=repo)
+        tool_client = create_tool_client()
+        engine = Engine(
+            router=router,
+            repo_path=repo,
+            search_tool=tool_client.search_code,
+        )
         result = engine.diagnose(doc)
         _display_diagnosis(result)
     except ValueError as e:

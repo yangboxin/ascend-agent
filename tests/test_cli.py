@@ -33,7 +33,8 @@ from ascend_agent.cli.app import app
 runner = CliRunner()
 
 
-def test_cli_no_args_shows_help():
+def test_cli_no_args_shows_help(monkeypatch):
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     result = runner.invoke(app, [])
     assert result.exit_code == 0
     assert "Ascend Diagnostic Agent" in result.stdout
@@ -53,7 +54,7 @@ def test_cli_diagnose_run_basic(tmp_path, monkeypatch):
     mock_engine = Mock()
     mock_engine.diagnose.return_value = Mock(hypotheses=[], errors=[], iterations_used=0)
     import ascend_agent.cli.diagnose as diag_mod
-    monkeypatch.setattr(diag_mod, "Engine", lambda router, repo_path: mock_engine)
+    monkeypatch.setattr(diag_mod, "Engine", lambda router, repo_path, **kwargs: mock_engine)
     monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
 
     result = runner.invoke(app, [
@@ -92,7 +93,7 @@ def test_cli_diagnose_integration(tmp_path, monkeypatch):
     mock_engine.diagnose.return_value = mock_result
 
     import ascend_agent.cli.diagnose as diag_mod
-    monkeypatch.setattr(diag_mod, "Engine", lambda router, repo_path: mock_engine)
+    monkeypatch.setattr(diag_mod, "Engine", lambda router, repo_path, **kwargs: mock_engine)
     monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
 
     result = runner.invoke(app, [
@@ -219,10 +220,12 @@ def test_fix_run_missing_api_key(tmp_path, monkeypatch):
     """Fix run exits with code 1 when API key is missing."""
     diagnosis_path = _write_diagnosis_json(tmp_path)
 
-    # Remove API key so ModelRouter raises ValueError
+    # Remove all API keys so ModelRouter raises ValueError
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ASCEND_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("ASCEND_QWEN_API_KEY", raising=False)
 
-    result = runner.invoke(app, ["fix", "run", diagnosis_path])
+    result = runner.invoke(app, ["--provider", "openai", "fix", "run", diagnosis_path])
     assert result.exit_code == 1
     assert "OPENAI_API_KEY" in result.stdout
 
@@ -296,8 +299,10 @@ def test_reproduce_run_missing_api_key(tmp_path, monkeypatch):
     diagnosis_path = _write_repro_diagnosis_json(tmp_path)
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ASCEND_DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("ASCEND_QWEN_API_KEY", raising=False)
 
-    result = runner.invoke(app, ["reproduce", "run", diagnosis_path])
+    result = runner.invoke(app, ["--provider", "openai", "reproduce", "run", diagnosis_path])
     assert result.exit_code == 1
     assert "OPENAI_API_KEY" in result.stdout
 
@@ -311,12 +316,14 @@ def test_cli_diagnose_root_provider_flag(tmp_path, monkeypatch):
     """--provider flag at root level is passed to create_router."""
     from unittest.mock import Mock
 
+    monkeypatch.setenv("ASCEND_DEEPSEEK_API_KEY", "sk-test-deepseek")
+
     (tmp_path / "test.py").write_text("x = 1\n")
 
     mock_engine = Mock()
     mock_engine.diagnose.return_value = Mock(hypotheses=[], errors=[], iterations_used=0)
     import ascend_agent.cli.diagnose as diag_mod
-    monkeypatch.setattr(diag_mod, "Engine", lambda router, repo_path: mock_engine)
+    monkeypatch.setattr(diag_mod, "Engine", lambda router, repo_path, **kwargs: mock_engine)
     monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
 
     result = runner.invoke(app, [
@@ -332,12 +339,14 @@ def test_cli_diagnose_per_command_provider_override(tmp_path, monkeypatch):
     """Per-command --provider overrides root --provider."""
     from unittest.mock import Mock
 
+    monkeypatch.setenv("ASCEND_DEEPSEEK_API_KEY", "sk-test-deepseek")
+
     (tmp_path / "test.py").write_text("x = 1\n")
 
     mock_engine = Mock()
     mock_engine.diagnose.return_value = Mock(hypotheses=[], errors=[], iterations_used=0)
     import ascend_agent.cli.diagnose as diag_mod
-    monkeypatch.setattr(diag_mod, "Engine", lambda router, repo_path: mock_engine)
+    monkeypatch.setattr(diag_mod, "Engine", lambda router, repo_path, **kwargs: mock_engine)
     monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
 
     result = runner.invoke(app, [
