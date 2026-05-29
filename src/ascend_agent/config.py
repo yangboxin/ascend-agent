@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     env_vars: dict[str, str] = {}
     repo_path: str | None = None
     mcp_server_command: str = "python -m ascend_agent.tools.server"
+    diagnosis_tool_backend: str = Field(
+        default="auto",
+        description="Diagnosis tool backend: auto|local|mcp (env: ASCEND_DIAGNOSIS_TOOL_BACKEND)",
+    )
     ssh_host: str = Field(default="", description="SSH hostname for remote execution")
     ssh_user: str = Field(default="", description="SSH username for remote execution")
     ssh_key_path: str = Field(default="", description="Path to SSH private key file (fallback if agent unavailable)")
