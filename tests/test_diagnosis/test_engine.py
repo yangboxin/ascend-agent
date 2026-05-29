@@ -68,6 +68,40 @@ class TestEngine:
         assert engine._router is mock_router
         assert engine._repo_path_resolved == tmp_path.resolve()
 
+    def test_engine_supports_injected_search_tool(self, mock_router, sample_context_doc, tmp_path: Path):
+        """Engine can run searches through an injected search tool."""
+        calls = []
+
+        async def fake_search(pattern: str, path: str) -> str:
+            calls.append((pattern, path))
+            return "src/module.py:1:def run(): pass"
+
+        mock_router.completion.side_effect = [
+            SearchDecision(
+                action="search",
+                searches=[SearchAction(pattern="run", rationale="find entrypoint")],
+                reasoning="need one lookup",
+            ),
+            SearchDecision(
+                action="hypothesize",
+                searches=[],
+                reasoning="done",
+            ),
+            DiagnosisResult(hypotheses=[], errors=[], iterations_used=2),
+        ]
+
+        engine = Engine(
+            router=mock_router,
+            repo_path=str(tmp_path),
+            search_tool=fake_search,
+        )
+        result = engine.diagnose(sample_context_doc)
+
+        assert isinstance(result, DiagnosisResult)
+        assert calls
+        assert calls[0][0] == "run"
+        assert Path(calls[0][1]).resolve() == tmp_path.resolve()
+
     def test_initial_llm_call_includes_trace_frame_source_context(self, mock_router, tmp_path: Path):
         """Trace frame source is collected before asking the LLM for searches."""
         source_path = tmp_path / "vllm" / "engine" / "async_llm_engine.py"

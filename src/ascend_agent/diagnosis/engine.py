@@ -10,6 +10,7 @@ import ast
 import logging
 import re
 from pathlib import Path
+from typing import Awaitable, Callable
 
 from ascend_agent.diagnosis.models import (
     DiagnosisResult,
@@ -23,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 MAX_ITERATIONS = 3
 MAX_TRACE_SOURCE_SNIPPETS = 5
+SearchTool = Callable[[str, str], Awaitable[str]]
 
 # ---------------------------------------------------------------------------
 # Utility: function body extraction
@@ -340,9 +342,20 @@ class Engine:
     ranked hypotheses and evidence.
     """
 
-    def __init__(self, router: ModelRouter, repo_path: str):
+    def __init__(
+        self,
+        router: ModelRouter,
+        repo_path: str,
+        search_tool: SearchTool | None = None,
+    ):
         self._router = router
         self._repo_path_resolved = Path(repo_path).resolve()
+        if search_tool is None:
+            from ascend_agent.tools.code_search import search_code
+
+            self._search_tool = search_code
+        else:
+            self._search_tool = search_tool
 
     # -- Public API ----------------------------------------------------------
 
@@ -469,13 +482,12 @@ class Engine:
         Returns a dict with either ``{"result": str}`` on success or
         ``{"error": str}`` on failure.
         """
-        # Local import to avoid circular dependency
-        from ascend_agent.tools.code_search import search_code
-
         try:
             # Safely run async code: prefer asyncio.run() unless already in an event loop
             async def _do_search():
-                return await search_code(pattern, str(self._repo_path_resolved))
+                return await self._search_tool(
+                    pattern, str(self._repo_path_resolved)
+                )
             try:
                 result_str = asyncio.run(_do_search())
             except RuntimeError:
