@@ -41,7 +41,7 @@ def diagnose_run(
     resolved_provider = provider or (ctx.obj.get("provider", "openai") if ctx.obj else "openai")
 
     if interactive:
-        _repl_mode(repo)
+        _repl_mode(repo, resolved_provider)
         return
 
     _one_shot_mode(repo, trace, trace_text, output, resolved_provider)
@@ -102,9 +102,10 @@ def _one_shot_mode(
             f.write(output_wrapper.model_dump_json(indent=2))
 
 
-def _repl_mode(repo: str):
+def _repl_mode(repo: str, provider: str = "openai"):
     console.print("[bold]Ascend Diagnostic Agent — REPL mode[/bold]")
     console.print("Type a stack trace or ':help' for commands.")
+    console.print(f"[dim]Active LLM provider: {provider}[/dim]")
 
     try:
         repo_info = RepoScanner().scan(repo)
@@ -118,6 +119,16 @@ def _repl_mode(repo: str):
         env_vars=settings.env_vars,
     )
     current_doc = ContextDocument(repo=repo_info, config_env=config_env)
+    router = None
+    chat_messages = [
+        {
+            "role": "system",
+            "content": (
+                "You are the currently selected Ascend Diagnostic Agent LLM. "
+                "Answer concisely and use the current diagnostic context when provided."
+            ),
+        }
+    ]
 
     while True:
         prompt = console.input("[cyan]>[/cyan] ")
@@ -130,9 +141,43 @@ def _repl_mode(repo: str):
                 console.print("  :help        Show this help")
                 console.print("  :repo <path> Rescan with new repo path")
                 console.print("  :output      Print JSON of current context")
+                console.print("  :chat <msg>  Chat with the active LLM provider")
+                console.print("  :reset-chat  Clear LLM chat history")
                 console.print("  :quit/:exit  Exit REPL")
             elif cmd == "output":
                 console.print(current_doc.model_dump_json(indent=2))
+            elif cmd.startswith("chat "):
+                user_message = cmd[5:].strip()
+                if not user_message:
+                    console.print("[yellow]Usage:[/yellow] :chat <message>")
+                    continue
+                if router is None:
+                    try:
+                        router = create_router(provider=provider)
+                    except ValueError as e:
+                        console.print(f"[red]Error:[/red] {e}")
+                        continue
+                context = current_doc.model_dump_json(indent=2)
+                chat_messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Current diagnostic context JSON:\n"
+                            f"{context}\n\nUser message:\n{user_message}"
+                        ),
+                    }
+                )
+                try:
+                    response = router.chat(chat_messages)
+                except Exception as e:
+                    console.print(f"[red]LLM chat failed:[/red] {e}")
+                    chat_messages.pop()
+                    continue
+                chat_messages.append({"role": "assistant", "content": response})
+                console.print(Panel(response, title=f"LLM ({provider})", border_style="cyan"))
+            elif cmd == "reset-chat":
+                chat_messages = chat_messages[:1]
+                console.print("[green]LLM chat history cleared.[/green]")
             elif cmd.startswith("repo "):
                 new_path = cmd[5:].strip()
                 try:
@@ -163,8 +208,13 @@ def _display_context(doc: ContextDocument):
         console.print(table)
 
     if doc.trace:
-        console.print(f"\n[bold red]Error:[/bold red] {doc.trace.error_type}")
-        console.print(f"[red]{doc.trace.error_message}[/red]")
+        if doc.trace.error_type:
+            console.print(f"\n[bold red]Error:[/bold red] {doc.trace.error_type}")
+            console.print(f"[red]{doc.trace.error_message or ''}[/red]")
+        else:
+            console.print("\n[bold yellow]Error:[/bold yellow] not detected")
+            if doc.trace.parse_warnings:
+                console.print(f"[dim]{', '.join(doc.trace.parse_warnings)}[/dim]")
         console.print("\n[bold]Stack Trace:[/bold]")
         for i, frame in enumerate(doc.trace.frames):
             if i >= 10:

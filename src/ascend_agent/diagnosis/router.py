@@ -3,11 +3,108 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 
 from openai import APIStatusError, BadRequestError, OpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
+
+
+def _json_fallback_instruction(response_model: type[BaseModel]) -> str:
+    schema = json.dumps(response_model.model_json_schema(), ensure_ascii=False)
+    return (
+        "Return only one valid JSON object that conforms to this JSON schema. "
+        "Do not include markdown fences, prose, or a bare word response.\n"
+        f"JSON schema: {schema}"
+    )
+
+
+def _extract_json_object(content: str) -> str | None:
+    stripped = content.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```(?:json)?\s*", "", stripped, flags=re.IGNORECASE)
+        stripped = re.sub(r"\s*```$", "", stripped)
+
+    decoder = json.JSONDecoder()
+    for idx, char in enumerate(stripped):
+        if char not in "[{":
+            continue
+        try:
+            _, end = decoder.raw_decode(stripped[idx:])
+        except json.JSONDecodeError:
+            continue
+        return stripped[idx : idx + end]
+    return None
+
+
+def _coerce_plain_text_response(
+    response_model: type[BaseModel], content: str
+) -> BaseModel | None:
+    """Handle common non-JSON fallback responses for simple router decisions."""
+    if response_model.__name__ != "SearchDecision":
+        if response_model.__name__ == "DiagnosisResult":
+            stripped = content.strip()
+            if stripped.lower().startswith("search"):
+                return response_model.model_validate(
+                    {
+                        "hypotheses": [],
+                        "errors": [
+                            {
+                                "stage": "hypothesis_generation",
+                                "reason": (
+                                    "Provider returned a search request instead "
+                                    "of a diagnosis result."
+                                ),
+                                "details": stripped,
+                            }
+                        ],
+                        "iterations_used": 0,
+                    }
+                )
+        return None
+
+    stripped = content.strip()
+    lowered = stripped.lower()
+    if not lowered.startswith(("search", "hypothesize")):
+        return None
+
+    action = "hypothesize" if lowered.startswith("hypothesize") else "search"
+    data: dict[str, object] = {
+        "action": action,
+        "searches": [],
+        "reasoning": "Provider returned a plain-text decision.",
+    }
+
+    if action == "search":
+        pattern_match = re.search(
+            r"(?:pattern|query)\s*:\s*[\"']?([^\"'\n]+)",
+            stripped,
+            flags=re.IGNORECASE,
+        )
+        if pattern_match:
+            data["searches"] = [
+                {
+                    "pattern": pattern_match.group(1).strip(),
+                    "rationale": "Provider returned a plain-text search pattern.",
+                }
+            ]
+
+    return response_model.model_validate(data)
+
+
+def _parse_fallback_response(
+    response_model: type[BaseModel], content: str
+) -> BaseModel:
+    json_content = _extract_json_object(content)
+    if json_content is not None:
+        return response_model.model_validate_json(json_content)
+
+    coerced = _coerce_plain_text_response(response_model, content)
+    if coerced is not None:
+        return coerced
+
+    return response_model.model_validate_json(content)
 
 
 class ProviderConfig(BaseModel):
@@ -178,7 +275,13 @@ class ModelRouter:
             )
             completion = self._client.chat.completions.create(
                 model=self._model,
-                messages=messages,
+                messages=messages
+                + [
+                    {
+                        "role": "user",
+                        "content": _json_fallback_instruction(response_model),
+                    }
+                ],
                 max_tokens=max_tokens,
                 temperature=temperature,
             )
@@ -188,7 +291,25 @@ class ModelRouter:
                     f"Empty response from provider (model={self._model}). "
                     "Cannot parse structured output."
                 )
-            return response_model.model_validate_json(content)
+            return _parse_fallback_response(response_model, content)
+
+    def chat(
+        self,
+        messages: list[dict],
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+    ) -> str:
+        """Send an unstructured chat request to the active provider."""
+        completion = self._client.chat.completions.create(
+            model=self._model,
+            messages=messages,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        content = completion.choices[0].message.content
+        if content is None:
+            return ""
+        return content
 
     def __repr__(self) -> str:
         return f"ModelRouter(model={self._model!r})"

@@ -233,6 +233,104 @@ def test_completion_fallback_on_400(monkeypatch):
     assert result.result == "ok"
     assert mock_parse.called
     assert router._client.chat.completions.create.called
+    fallback_messages = router._client.chat.completions.create.call_args.kwargs["messages"]
+    assert "Return only one valid JSON object" in fallback_messages[-1]["content"]
+
+
+def test_completion_fallback_extracts_json_from_markdown(monkeypatch):
+    from unittest.mock import Mock
+    from openai import BadRequestError
+    from pydantic import BaseModel
+
+    class TestModel(BaseModel):
+        result: str
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr("openai.OpenAI.__init__", lambda self, **kwargs: None)
+    from ascend_agent.diagnosis.router import ModelRouter
+
+    router = ModelRouter()
+    router._client.chat.completions.parse = Mock(
+        side_effect=BadRequestError(
+            "Bad Request", response=Mock(status_code=400), body={}
+        )
+    )
+
+    mock_create_response = Mock()
+    mock_create_response.choices = [
+        Mock(message=Mock(content='```json\n{"result": "ok"}\n```'))
+    ]
+    router._client.chat.completions.create = Mock(return_value=mock_create_response)
+
+    result = router.completion(
+        messages=[{"role": "user", "content": "test"}],
+        response_model=TestModel,
+    )
+
+    assert result.result == "ok"
+
+
+def test_completion_fallback_coerces_plain_search_decision(monkeypatch):
+    from unittest.mock import Mock
+    from openai import BadRequestError
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr("openai.OpenAI.__init__", lambda self, **kwargs: None)
+    from ascend_agent.diagnosis.models import SearchDecision
+    from ascend_agent.diagnosis.router import ModelRouter
+
+    router = ModelRouter()
+    router._client.chat.completions.parse = Mock(
+        side_effect=BadRequestError(
+            "Bad Request", response=Mock(status_code=400), body={}
+        )
+    )
+
+    mock_create_response = Mock()
+    mock_create_response.choices = [
+        Mock(message=Mock(content='search pattern: "unknown_symbol"'))
+    ]
+    router._client.chat.completions.create = Mock(return_value=mock_create_response)
+
+    result = router.completion(
+        messages=[{"role": "user", "content": "test"}],
+        response_model=SearchDecision,
+    )
+
+    assert result.action == "search"
+    assert result.searches[0].pattern == "unknown_symbol"
+
+
+def test_completion_fallback_coerces_search_as_diagnosis_error(monkeypatch):
+    from unittest.mock import Mock
+    from openai import BadRequestError
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr("openai.OpenAI.__init__", lambda self, **kwargs: None)
+    from ascend_agent.diagnosis.models import DiagnosisResult
+    from ascend_agent.diagnosis.router import ModelRouter
+
+    router = ModelRouter()
+    router._client.chat.completions.parse = Mock(
+        side_effect=BadRequestError(
+            "Bad Request", response=Mock(status_code=400), body={}
+        )
+    )
+
+    mock_create_response = Mock()
+    mock_create_response.choices = [
+        Mock(message=Mock(content='search pattern: "unknown_symbol"'))
+    ]
+    router._client.chat.completions.create = Mock(return_value=mock_create_response)
+
+    result = router.completion(
+        messages=[{"role": "user", "content": "test"}],
+        response_model=DiagnosisResult,
+    )
+
+    assert result.hypotheses == []
+    assert result.errors[0].stage == "hypothesis_generation"
+    assert "unknown_symbol" in result.errors[0].details
 
 
 def test_completion_no_fallback_non_400(monkeypatch):
@@ -289,3 +387,21 @@ def test_completion_fallback_empty_content(monkeypatch):
         assert False, "Should have raised ValueError"
     except ValueError as e:
         assert "Empty response" in str(e)
+
+
+def test_chat_returns_raw_content(monkeypatch):
+    from unittest.mock import Mock
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr("openai.OpenAI.__init__", lambda self, **kwargs: None)
+    from ascend_agent.diagnosis.router import ModelRouter
+
+    router = ModelRouter()
+    mock_create_response = Mock()
+    mock_create_response.choices = [Mock(message=Mock(content="hello"))]
+    router._client.chat.completions.create = Mock(return_value=mock_create_response)
+
+    result = router.chat([{"role": "user", "content": "ping"}])
+
+    assert result == "hello"
+    assert router._client.chat.completions.create.called

@@ -46,3 +46,34 @@ def test_exception_group_preserves_nested_causes():
     assert result.error_type == "ExceptionGroup"
     assert result.error_message == "worker failures (2 sub-exceptions)"
     assert [cause.error_type for cause in result.causes] == ["ValueError", "RuntimeError"]
+
+
+def test_generic_log_error_is_used_when_no_python_exception():
+    result = parse_stack_trace("[ERROR] runtime task failed on device 3")
+
+    assert result.error_type == "LogError"
+    assert result.error_message == "runtime task failed on device 3"
+    assert result.parse_warnings == []
+
+
+def test_ascend_error_code_is_used_when_no_python_exception():
+    result = parse_stack_trace("ACL failure: retCode=507011 stream synchronize failed")
+
+    assert result.error_type == "AscendRuntimeError"
+    assert result.error_message == "ACL failure: retCode=507011 stream synchronize failed"
+    assert result.runtime_signals["error_code"] == "507011"
+
+
+def test_plain_lowercase_error_phrase_is_used_as_last_resort():
+    result = parse_stack_trace("worker error device allocation failed")
+
+    assert result.error_type == "LogError"
+    assert result.error_message == "device allocation failed"
+
+
+def test_unmatched_text_reports_parse_warning_without_none_display_contract():
+    result = parse_stack_trace("all systems nominal")
+
+    assert result.error_type is None
+    assert result.error_message is None
+    assert result.parse_warnings == ["no_error_line_detected"]

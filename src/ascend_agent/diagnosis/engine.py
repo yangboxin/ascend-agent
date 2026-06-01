@@ -276,9 +276,10 @@ def _build_system_prompt() -> str:
         "- A concise root cause statement\n"
         "- Supporting evidence with file:line references and code snippets\n"
         "- A confidence score between 0.0 and 1.0\n\n"
-        "When you have enough information, output 'hypothesize' to produce "
-        "the final diagnosis. If you need more information, output 'search' "
-        "with specific patterns to explore."
+        "When you have enough information, set action to 'hypothesize' to "
+        "produce the final diagnosis. If you need more information, set "
+        "action to 'search' and include specific search patterns to explore. "
+        "Always return structured JSON matching the requested schema."
     )
 
 
@@ -438,7 +439,8 @@ class Engine:
             else ""
         )
         prompt = (
-            f"Generate your top 3 ranked hypotheses with evidence. {extra}"
+            "Generate your top 3 ranked hypotheses with evidence as "
+            f"structured JSON matching the requested schema. {extra}"
         ).strip()
 
         search_context = _format_search_history(search_history)
