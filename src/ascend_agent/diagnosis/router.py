@@ -361,9 +361,35 @@ def _configured_proxy() -> str | None:
 
 def _build_http_client() -> httpx.Client:
     proxy = _configured_proxy()
+    verify = _ssl_verify_config()
     if proxy:
-        return httpx.Client(proxy=proxy, trust_env=True, timeout=60.0)
-    return httpx.Client(trust_env=True, timeout=60.0)
+        return httpx.Client(proxy=proxy, verify=verify, trust_env=True, timeout=60.0)
+    return httpx.Client(verify=verify, trust_env=True, timeout=60.0)
+
+
+def _ssl_verify_config() -> bool | str:
+    verify_value = os.environ.get("ASCEND_SSL_VERIFY")
+    if verify_value is not None and verify_value.strip().lower() in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }:
+        logger.warning(
+            "TLS certificate verification is disabled via ASCEND_SSL_VERIFY=%s. "
+            "Use only for trusted internal networks.",
+            verify_value,
+        )
+        return False
+
+    ca_bundle = (
+        os.environ.get("ASCEND_CA_BUNDLE")
+        or os.environ.get("REQUESTS_CA_BUNDLE")
+        or os.environ.get("SSL_CERT_FILE")
+    )
+    if ca_bundle:
+        return ca_bundle
+    return True
 
 
 def _format_connection_error(
@@ -375,8 +401,16 @@ def _format_connection_error(
     cause_text = f"{type(cause).__name__}: {cause}" if cause else str(error)
     proxy_names = [name for name in _PROXY_ENV_NAMES if os.environ.get(name)]
     proxy_text = ", ".join(proxy_names) if proxy_names else "none"
+    ca_bundle = (
+        os.environ.get("ASCEND_CA_BUNDLE")
+        or os.environ.get("REQUESTS_CA_BUNDLE")
+        or os.environ.get("SSL_CERT_FILE")
+        or "default"
+    )
+    ssl_verify = os.environ.get("ASCEND_SSL_VERIFY", "true")
     return (
         "LLM connection failed "
-        f"(base_url={base_url}, model={model}, proxy_env={proxy_text}). "
+        f"(base_url={base_url}, model={model}, proxy_env={proxy_text}, "
+        f"ssl_verify={ssl_verify}, ca_bundle={ca_bundle}). "
         f"Underlying error: {cause_text}"
     )

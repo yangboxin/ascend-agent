@@ -405,3 +405,41 @@ def test_chat_returns_raw_content(monkeypatch):
 
     assert result == "hello"
     assert router._client.chat.completions.create.called
+
+
+def test_http_client_uses_ca_bundle(monkeypatch):
+    monkeypatch.setenv("ASCEND_CA_BUNDLE", "/tmp/internal-ca.pem")
+    monkeypatch.delenv("ASCEND_SSL_VERIFY", raising=False)
+    monkeypatch.delenv("ASCEND_HTTPS_PROXY", raising=False)
+    from ascend_agent.diagnosis import router as router_mod
+
+    captured = {}
+
+    def fake_client(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(router_mod.httpx, "Client", fake_client)
+
+    router_mod._build_http_client()
+
+    assert captured["verify"] == "/tmp/internal-ca.pem"
+
+
+def test_http_client_can_disable_ssl_verify(monkeypatch):
+    monkeypatch.setenv("ASCEND_SSL_VERIFY", "false")
+    monkeypatch.delenv("ASCEND_CA_BUNDLE", raising=False)
+    monkeypatch.delenv("ASCEND_HTTPS_PROXY", raising=False)
+    from ascend_agent.diagnosis import router as router_mod
+
+    captured = {}
+
+    def fake_client(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(router_mod.httpx, "Client", fake_client)
+
+    router_mod._build_http_client()
+
+    assert captured["verify"] is False
