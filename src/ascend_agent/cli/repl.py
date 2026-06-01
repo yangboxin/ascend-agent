@@ -16,8 +16,10 @@ def run_repl(provider: str = ""):
 
     if not provider:
         provider = cm.get_active()
+    active_model = cm.get_active_model()
     state = {
         "provider": provider,
+        "model": active_model,
         "router": None,
         "messages": [
             {
@@ -33,7 +35,7 @@ def run_repl(provider: str = ""):
     console.print(Panel.fit(
         "[bold]Ascend Diagnostic Agent — Interactive Mode[/bold]\n"
         "Type [bold]/help[/bold] for commands or [bold]/quit[/bold] to exit.\n"
-        f"Active LLM provider: [cyan]{provider}[/cyan]",
+        f"Active model: [cyan]{active_model}[/cyan]",
         border_style="cyan",
     ))
 
@@ -71,12 +73,14 @@ def _handle_command(raw: str, cm: ConfigManager, state: dict):
 
     elif cmd == "models":
         _handle_models(args, cm)
+        new_model = cm.get_active_model()
         new_provider = cm.get_active()
-        if new_provider != state["provider"]:
+        if new_model != state["model"]:
             state["provider"] = new_provider
+            state["model"] = new_model
             state["router"] = None
             state["messages"] = state["messages"][:1]
-            console.print(f"[green]Active LLM provider:[/green] {new_provider}")
+            console.print(f"[green]Active model:[/green] {new_model}")
 
     elif cmd == "chat":
         _handle_chat(" ".join(args), state)
@@ -97,7 +101,9 @@ def _handle_text_input(text: str):
 def _show_help():
     console.print(Panel.fit(
         "[bold]Available Commands[/bold]\n\n"
-        "  [bold]/models[/bold]          Open interactive provider & model manager\n"
+        "  [bold]/models[/bold]          Show current model and available model IDs\n"
+        "  [bold]/models use <id>[/bold] Select a model, e.g. openai/gpt-5.5\n"
+        "  [bold]/models add <provider>[/bold] Connect a provider preset\n"
         "  [bold]/chat <message>[/bold]  Chat with the active LLM provider\n"
         "  [bold]/reset-chat[/bold]      Clear LLM chat history\n"
         "  [bold]/help[/bold]            Show this help\n"
@@ -108,8 +114,9 @@ def _show_help():
 
 
 def _handle_models(args: list[str], cm: ConfigManager):
-    from ascend_agent.cli.models_browser import show_provider_browser
-    show_provider_browser(cm)
+    from ascend_agent.cli.models import handle_models_command
+
+    handle_models_command(args, cm)
 
 
 def _handle_chat(message: str, state: dict):

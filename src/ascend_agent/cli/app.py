@@ -60,8 +60,10 @@ from ascend_agent.cli.diagnose import diagnose_app
 from ascend_agent.cli.reproduce import reproduce_app
 from ascend_agent.cli.fix import fix_app
 from ascend_agent.cli.verify import verify_app
+from ascend_agent.cli.models import models_app
 
 app.add_typer(diagnose_app)
 app.add_typer(reproduce_app)
 app.add_typer(fix_app)
 app.add_typer(verify_app)
+app.add_typer(models_app)

@@ -47,6 +47,44 @@ def test_cli_diagnose_subcommand():
     assert "--trace-text" in result.stdout
 
 
+def test_cli_models_shows_model_ids(tmp_path, monkeypatch):
+    import ascend_agent.cli.config_manager as config_mod
+
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", tmp_path / "providers.json")
+
+    result = runner.invoke(app, ["models"])
+
+    assert result.exit_code == 0
+    assert "openai/gpt-5.5" in result.stdout
+    assert "deepseek/deepseek-v4-pro" in result.stdout
+
+
+def test_cli_models_use_writes_active_model(tmp_path, monkeypatch):
+    import ascend_agent.cli.config_manager as config_mod
+
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", tmp_path / "providers.json")
+
+    result = runner.invoke(app, ["models", "use", "deepseek/deepseek-v4-pro"])
+
+    assert result.exit_code == 0
+    assert "deepseek/deepseek-v4-pro" in result.stdout
+    assert config_mod.ConfigManager().get_active_model() == "deepseek/deepseek-v4-pro"
+
+
+def test_cli_models_rejects_unknown_builtin_model(tmp_path, monkeypatch):
+    import ascend_agent.cli.config_manager as config_mod
+
+    monkeypatch.setattr(config_mod, "CONFIG_DIR", tmp_path)
+    monkeypatch.setattr(config_mod, "CONFIG_FILE", tmp_path / "providers.json")
+
+    result = runner.invoke(app, ["models", "use", "deepseek/deepseek-chat"])
+
+    assert result.exit_code == 1
+    assert "Unknown model" in result.stdout
+
+
 def test_cli_diagnose_run_basic(tmp_path, monkeypatch):
     from unittest.mock import Mock
 
