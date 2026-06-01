@@ -8,18 +8,9 @@ from prompt_toolkit.shortcuts import input_dialog
 from prompt_toolkit.styles import Style
 
 from ascend_agent.cli.config_manager import ConfigManager, ProviderRecord
+from ascend_agent.cli.model_catalog import PROVIDER_PRESETS, full_model_id
 
-PROVIDER_PRESETS: list[dict] = [
-    {"name": "OpenAI", "base_url": "https://api.openai.com/v1", "default_model": "gpt-4o",
-     "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-3.5-turbo"]},
-    {"name": "DeepSeek", "base_url": "https://api.deepseek.com/v1", "default_model": "deepseek-v4-flash",
-     "models": ["deepseek-v4-flash", "deepseek-chat", "deepseek-coder"]},
-    {"name": "Qwen (DashScope)", "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-     "default_model": "qwen-turbo", "models": ["qwen-turbo", "qwen-plus", "qwen-max"]},
-    {"name": "Ollama (Local)", "base_url": "http://localhost:11434/v1",
-     "default_model": "llama3", "models": ["llama3", "llama3.1", "mistral", "codellama"]},
-    {"name": "Custom...", "base_url": "", "default_model": "", "models": []},
-]
+PRESET_CHOICES = list(PROVIDER_PRESETS.values()) + [None]
 
 style = Style([
     ("header", "bg:#0055aa bold #ffffff"),
@@ -74,7 +65,7 @@ class _ProviderBrowser:
                 max_i = len(self._model_list()) - 1
                 self.idx = min(max_i, self.idx + 1)
             elif self.screen == "add_type":
-                self.idx = min(len(PROVIDER_PRESETS) - 1, self.idx + 1)
+                self.idx = min(len(PRESET_CHOICES) - 1, self.idx + 1)
 
         @kb.add("enter")
         def _enter(event):
@@ -194,17 +185,17 @@ class _ProviderBrowser:
         for i, m in enumerate(self._model_list()):
             p = "▸" if i == self.idx else " "
             style_i = "class:selected" if i == self.idx else ""
-            lines.append((style_i, f"  {p} {m}\n"))
+            lines.append((style_i, f"  {p} {full_model_id(prov.name, m)}\n"))
         return lines
 
     def _body_add_type(self):
         lines = [("", "\n")]
         lines.append(("bold", "  Select provider type:\n\n"))
-        for i, preset in enumerate(PROVIDER_PRESETS):
+        for i, preset in enumerate(PRESET_CHOICES):
             p = "▸" if i == self.idx else " "
             style_i = "class:selected" if i == self.idx else ""
-            name = preset["name"]
-            url = preset["base_url"] or "manual entry"
+            name = preset.name if preset else "Custom..."
+            url = preset.base_url if preset else "manual entry"
             lines.append((style_i, f"  {p} {name}\n"))
             lines.append(("class:dim", f"     {url}\n"))
             lines.append(("", "\n"))
@@ -248,11 +239,8 @@ class _ProviderBrowser:
     # --- Helpers ---
     @staticmethod
     def _common_models(name: str) -> list[str]:
-        for p in PROVIDER_PRESETS:
-            pname = p["name"].lower().split()[0].split("(")[0].strip()
-            if pname == name:
-                return p.get("models", [])
-        return []
+        preset = PROVIDER_PRESETS.get(name)
+        return list(preset.models) if preset else []
 
     def _is_configured(self, prov: ProviderRecord) -> bool:
         if prov.api_key:
@@ -296,10 +284,10 @@ class _ProviderBrowser:
         self.screen = "list"
 
     def _on_select_preset(self, event):
-        if self.idx >= len(PROVIDER_PRESETS):
+        if self.idx >= len(PRESET_CHOICES):
             return
-        preset = PROVIDER_PRESETS[self.idx]
-        if preset["name"] == "Custom...":
+        preset = PRESET_CHOICES[self.idx]
+        if preset is None:
             self._pending = self.PENDING_ADD_CUSTOM
             self._pending_data = None
         else:
@@ -329,16 +317,16 @@ class _ProviderBrowser:
         self.cm.set_active(prov.name)
         self._refresh()
 
-    def _do_add_preset(self, preset: dict):
-        name = preset["name"].lower().split()[0].split("(")[0].strip()
-        url = preset["base_url"]
-        model = preset["default_model"]
+    def _do_add_preset(self, preset):
+        name = preset.id
+        url = preset.base_url
+        model = preset.default_model
 
         result = input_dialog(
-            title=f"Connect {preset['name']}",
-            text=f"Provider: {preset['name']}\n"
+            title=f"Connect {preset.name}",
+            text=f"Provider: {preset.name}\n"
                  f"Base URL: {url}\n"
-                 f"Default model: {model}\n\n"
+                 f"Model: {name}/{model}\n\n"
                  "Enter API key (leave empty to use env vars):",
             ok_text="Connect",
             cancel_text="Skip",
@@ -376,9 +364,9 @@ class _ProviderBrowser:
         model = input_dialog(
             title="Custom Provider",
             text="Enter default model name:",
-            default="gpt-4o",
+            default="gpt-5.5",
         ).run()
-        model = (model.strip() or "gpt-4o") if model else "gpt-4o"
+        model = (model.strip() or "gpt-5.5") if model else "gpt-5.5"
 
         api_key = input_dialog(
             title="Custom Provider",

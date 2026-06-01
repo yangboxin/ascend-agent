@@ -5,10 +5,24 @@ import logging
 import os
 import re
 
-from openai import APIStatusError, BadRequestError, OpenAI
+import httpx
+from openai import APIConnectionError, APIStatusError, BadRequestError, OpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
+from ascend_agent.cli.model_catalog import PROVIDER_PRESETS
+
 logger = logging.getLogger(__name__)
+
+_PROXY_ENV_NAMES = (
+    "ASCEND_HTTPS_PROXY",
+    "ASCEND_HTTP_PROXY",
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "ALL_PROXY",
+    "https_proxy",
+    "http_proxy",
+    "all_proxy",
+)
 
 
 def _json_fallback_instruction(response_model: type[BaseModel]) -> str:
@@ -118,9 +132,8 @@ class ProviderConfig(BaseModel):
 
 
 PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
-    "openai": {"base_url": "https://api.openai.com/v1", "default_model": "gpt-4o"},
-    "deepseek": {"base_url": "https://api.deepseek.com/v1", "default_model": "deepseek-v4-flash"},
-    "qwen": {"base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1", "default_model": "qwen-turbo"},
+    preset.id: {"base_url": preset.base_url, "default_model": preset.default_model}
+    for preset in PROVIDER_PRESETS.values()
 }
 
 
@@ -151,7 +164,7 @@ def _resolve_provider_config(provider: str) -> tuple[str, str, str]:
     # Fall back to built-in defaults
     builtin = PROVIDER_DEFAULTS.get(provider, {})
     base_url = base_url or builtin.get("base_url", "https://api.openai.com/v1")
-    default_model = default_model or builtin.get("default_model", "gpt-4o")
+    default_model = default_model or builtin.get("default_model", "gpt-5.5")
 
     return base_url, api_key or None, default_model
 
@@ -208,7 +221,7 @@ class ModelRouter:
     via .parse() with Pydantic response_format.
     """
 
-    _DEFAULT_MODEL = "gpt-4o"
+    _DEFAULT_MODEL = "gpt-5.5"
 
     def __init__(
         self,
@@ -218,9 +231,11 @@ class ModelRouter:
     ):
         if config is not None:
             # New code path: use ProviderConfig
+            self._base_url = config.base_url
             self._client = OpenAI(
                 api_key=config.api_key,
                 base_url=config.base_url,
+                http_client=_build_http_client(),
             )
             self._model = config.default_model
         else:
@@ -231,11 +246,20 @@ class ModelRouter:
                     "OPENAI_API_KEY is required for diagnosis. "
                     "Set the OPENAI_API_KEY environment variable."
                 )
-            self._client = OpenAI(api_key=api_key)
+            self._base_url = os.environ.get("ASCEND_OPENAI_BASE_URL", "https://api.openai.com/v1")
+            self._client = OpenAI(
+                api_key=api_key,
+                base_url=self._base_url,
+                http_client=_build_http_client(),
+            )
             self._model = model or os.environ.get(
                 "ASCEND_DIAGNOSIS_MODEL", self._DEFAULT_MODEL
             )
-        logger.info("ModelRouter initialized (model: %s)", self._model)
+        logger.info(
+            "ModelRouter initialized (model: %s, base_url: %s)",
+            self._model,
+            self._base_url,
+        )
 
     def completion(
         self,
@@ -264,6 +288,8 @@ class ModelRouter:
                 temperature=temperature,
             )
             return completion.choices[0].message.parsed
+        except APIConnectionError as e:
+            raise RuntimeError(_format_connection_error(e, self._base_url, self._model)) from e
         except (APIStatusError, BadRequestError) as e:
             if e.status_code != 400:
                 raise
@@ -273,18 +299,25 @@ class ModelRouter:
                 self._model,
                 e.status_code,
             )
-            completion = self._client.chat.completions.create(
-                model=self._model,
-                messages=messages
-                + [
-                    {
-                        "role": "user",
-                        "content": _json_fallback_instruction(response_model),
-                    }
-                ],
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
+            try:
+                completion = self._client.chat.completions.create(
+                    model=self._model,
+                    messages=messages
+                    + [
+                        {
+                            "role": "user",
+                            "content": _json_fallback_instruction(response_model),
+                        }
+                    ],
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                )
+            except APIConnectionError as connection_error:
+                raise RuntimeError(
+                    _format_connection_error(
+                        connection_error, self._base_url, self._model
+                    )
+                ) from connection_error
             content = completion.choices[0].message.content
             if not content:
                 raise ValueError(
@@ -300,12 +333,15 @@ class ModelRouter:
         temperature: float = 0.2,
     ) -> str:
         """Send an unstructured chat request to the active provider."""
-        completion = self._client.chat.completions.create(
-            model=self._model,
-            messages=messages,
-            max_tokens=max_tokens,
-            temperature=temperature,
-        )
+        try:
+            completion = self._client.chat.completions.create(
+                model=self._model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+        except APIConnectionError as e:
+            raise RuntimeError(_format_connection_error(e, self._base_url, self._model)) from e
         content = completion.choices[0].message.content
         if content is None:
             return ""
@@ -313,3 +349,34 @@ class ModelRouter:
 
     def __repr__(self) -> str:
         return f"ModelRouter(model={self._model!r})"
+
+
+def _configured_proxy() -> str | None:
+    for name in _PROXY_ENV_NAMES:
+        value = os.environ.get(name)
+        if value:
+            return value
+    return None
+
+
+def _build_http_client() -> httpx.Client:
+    proxy = _configured_proxy()
+    if proxy:
+        return httpx.Client(proxy=proxy, trust_env=True, timeout=60.0)
+    return httpx.Client(trust_env=True, timeout=60.0)
+
+
+def _format_connection_error(
+    error: APIConnectionError,
+    base_url: str,
+    model: str,
+) -> str:
+    cause = error.__cause__ or error.__context__
+    cause_text = f"{type(cause).__name__}: {cause}" if cause else str(error)
+    proxy_names = [name for name in _PROXY_ENV_NAMES if os.environ.get(name)]
+    proxy_text = ", ".join(proxy_names) if proxy_names else "none"
+    return (
+        "LLM connection failed "
+        f"(base_url={base_url}, model={model}, proxy_env={proxy_text}). "
+        f"Underlying error: {cause_text}"
+    )

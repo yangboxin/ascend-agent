@@ -15,7 +15,7 @@ def test_router_uses_default_model(monkeypatch):
     from ascend_agent.diagnosis.router import ModelRouter
 
     router = ModelRouter()
-    assert router._model == "gpt-4o"
+    assert router._model == "gpt-5.5"
 
 
 def test_router_uses_env_model(monkeypatch):
@@ -53,7 +53,7 @@ def test_create_router_default_openai(monkeypatch):
 
     router = create_router("openai")
     assert router is not None
-    assert router._model == "gpt-4o"
+    assert router._model == "gpt-5.5"
 
 
 def test_create_router_with_base_url(monkeypatch):
@@ -120,7 +120,7 @@ def test_model_router_backward_compat(monkeypatch):
     from ascend_agent.diagnosis.router import ModelRouter
 
     router = ModelRouter()
-    assert router._model == "gpt-4o"
+    assert router._model == "gpt-5.5"
 
 
 def test_create_router_deepseek_defaults(monkeypatch):
@@ -170,7 +170,7 @@ def test_create_router_qwen_defaults(monkeypatch):
 
     router = create_router("qwen")
     assert captured.get("base_url") == "https://dashscope.aliyuncs.com/compatible-mode/v1"
-    assert router._model == "qwen-turbo"
+    assert router._model == "qwen3.6-plus"
 
 
 def test_create_router_deepseek_missing_key(monkeypatch):
