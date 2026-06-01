@@ -152,6 +152,42 @@ class TestEngine:
         assert "vllm/engine/async_llm_engine.py:5" in combined
         assert "raise ValueError('Invalid dimension')" in combined
 
+    def test_initial_llm_call_includes_uncertain_signal_candidates(self, mock_router, tmp_path: Path):
+        """Fuzzy/OCR signal candidates are passed as uncertain hints."""
+        from ascend_agent.context.models import TraceSignalCandidate
+
+        context = ContextDocument(
+            repo=RepoInfo(path=str(tmp_path), language="python"),
+            trace=TraceInfo(
+                error_type=None,
+                error_message=None,
+                signal_candidates=[
+                    TraceSignalCandidate(
+                        kind="runtime_symbol",
+                        value="aclrtSynchronize",
+                        confidence=0.88,
+                        source_text="acIrtSynchronlze faiIed",
+                        reason="fuzzy OCR-tolerant runtime symbol match",
+                    )
+                ],
+                raw_text="acIrtSynchronlze faiIed",
+            ),
+            config_env=ConfigEnv(),
+        )
+        mock_router.completion.side_effect = [
+            SearchDecision(action="hypothesize", reasoning="source frame is enough"),
+            DiagnosisResult(hypotheses=[], errors=[], iterations_used=1),
+        ]
+
+        result = Engine(router=mock_router, repo_path=str(tmp_path)).diagnose(context)
+
+        assert isinstance(result, DiagnosisResult)
+        first_messages = mock_router.completion.call_args_list[0].kwargs["messages"]
+        combined = "\n".join(message["content"] for message in first_messages)
+        assert "Uncertain OCR/fuzzy signal candidates" in combined
+        assert "aclrtSynchronize" in combined
+        assert "not facts" in combined
+
     def test_search_loop_hypothesizes_after_searches(self, mock_router, sample_context_doc, tmp_path: Path):
         """Engine search loop iterates with mock LLM: searches then hypothesizes."""
         # First call returns search decision

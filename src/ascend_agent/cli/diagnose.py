@@ -215,6 +215,12 @@ def _display_context(doc: ContextDocument):
             console.print("\n[bold yellow]Error:[/bold yellow] not detected")
             if doc.trace.parse_warnings:
                 console.print(f"[dim]{', '.join(doc.trace.parse_warnings)}[/dim]")
+        if doc.trace.signal_candidates:
+            preview = ", ".join(
+                f"{candidate.kind}={candidate.value} ({candidate.confidence:.2f})"
+                for candidate in doc.trace.signal_candidates[:5]
+            )
+            console.print(f"[yellow]Uncertain signals:[/yellow] {preview}")
         console.print("\n[bold]Stack Trace:[/bold]")
         for i, frame in enumerate(doc.trace.frames):
             if i >= 10:

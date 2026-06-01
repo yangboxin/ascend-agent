@@ -292,6 +292,17 @@ def _build_user_prompt(context_doc) -> str:
     if trace:
         lines.append(f"Error type: {trace.error_type or 'unknown'}")
         lines.append(f"Error message: {trace.error_message or 'unknown'}")
+        if getattr(trace, "signal_candidates", None):
+            lines.append("")
+            lines.append(
+                "Uncertain OCR/fuzzy signal candidates. Treat these as hints, "
+                "not facts, unless supported by source code or exact logs:"
+            )
+            for candidate in trace.signal_candidates[:10]:
+                lines.append(
+                    f"  - {candidate.kind}: {candidate.value} "
+                    f"(confidence={candidate.confidence:.2f}, source={candidate.source_text!r})"
+                )
         lines.append("")
         lines.append("Stack trace frames:")
         for i, frame in enumerate(trace.frames, 1):

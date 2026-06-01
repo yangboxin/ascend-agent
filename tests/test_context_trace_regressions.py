@@ -77,3 +77,20 @@ def test_unmatched_text_reports_parse_warning_without_none_display_contract():
     assert result.error_type is None
     assert result.error_message is None
     assert result.parse_warnings == ["no_error_line_detected"]
+
+
+def test_ocr_noisy_error_type_and_runtime_symbol_are_candidates():
+    result = parse_stack_trace("Runt1meErr0r: acIrtSynchronlze faiIed")
+
+    candidates = {(c.kind, c.value) for c in result.signal_candidates}
+    assert ("error_type", "RuntimeError") in candidates
+    assert ("runtime_symbol", "aclrtSynchronize") in candidates
+    assert "uncertain_signal_candidates" in result.parse_warnings
+
+
+def test_ocr_normalized_error_code_is_candidate_not_exact_signal():
+    result = parse_stack_trace("ACL failure retC0de=5O7O11")
+
+    candidates = {(c.kind, c.value) for c in result.signal_candidates}
+    assert ("error_code", "507011") in candidates
+    assert result.runtime_signals == {}

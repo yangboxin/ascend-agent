@@ -1,8 +1,14 @@
 import pathlib
 import re
 import sys
+from difflib import SequenceMatcher
 
-from ascend_agent.context.models import TraceCause, TraceEntry, TraceInfo
+from ascend_agent.context.models import (
+    TraceCause,
+    TraceEntry,
+    TraceInfo,
+    TraceSignalCandidate,
+)
 
 _frame_pattern = re.compile(
     r'File "(?P<file>[^"]+)", line (?P<line>\d+)(?:, in (?P<function>\S+))?'
@@ -29,6 +35,49 @@ _ascend_error_pattern = re.compile(
 
 _pytest_failed_pattern = re.compile(
     r"^FAILED\s+(?P<file>[^:\s]+)::(?P<function>[^\s]+)\s+-\s+(?P<rest>.*)$"
+)
+
+_FUZZY_ERROR_TYPES = (
+    "RuntimeError",
+    "ValueError",
+    "AssertionError",
+    "TypeError",
+    "ImportError",
+    "ModuleNotFoundError",
+    "ExceptionGroup",
+)
+
+_FUZZY_RUNTIME_SYMBOLS = (
+    "aclrtSynchronize",
+    "rtStreamSynchronize",
+    "aclrtMemcpy",
+    "HCCL",
+    "CANN",
+    "Ascend",
+    "retCode",
+)
+
+_OCR_ALPHA_TRANSLATION = str.maketrans(
+    {
+        "0": "o",
+        "1": "l",
+        "3": "e",
+        "5": "s",
+        "7": "t",
+        "8": "b",
+        "|": "l",
+    }
+)
+_OCR_DIGIT_TRANSLATION = str.maketrans(
+    {
+        "O": "0",
+        "o": "0",
+        "I": "1",
+        "l": "1",
+        "S": "5",
+        "s": "5",
+        "B": "8",
+    }
 )
 
 
@@ -95,9 +144,16 @@ def parse_stack_trace(raw_text: str) -> TraceInfo:
     error_type, error_message = _select_primary_error(errors)
     causes = _extract_causes(python_errors, error_type, error_message)
     runtime_signals = _extract_runtime_signals(raw_text)
+    signal_candidates = _extract_signal_candidates(
+        raw_text,
+        runtime_signals=runtime_signals,
+        known_error_type=error_type,
+    )
 
     if raw_text and not errors:
         parse_warnings.append("no_error_line_detected")
+    if signal_candidates:
+        parse_warnings.append("uncertain_signal_candidates")
 
     return TraceInfo(
         error_type=error_type,
@@ -105,6 +161,7 @@ def parse_stack_trace(raw_text: str) -> TraceInfo:
         frames=frames,
         causes=causes,
         runtime_signals=runtime_signals,
+        signal_candidates=signal_candidates,
         parse_warnings=parse_warnings,
         raw_text=raw_text,
     )
@@ -228,6 +285,121 @@ def _extract_runtime_signals(raw_text: str) -> dict[str, str]:
         if match:
             signals[key] = match.group("value")
     return signals
+
+
+def _normalize_for_fuzzy_alpha(text: str) -> str:
+    return re.sub(
+        r"[^a-z0-9]+",
+        "",
+        text.lower().translate(_OCR_ALPHA_TRANSLATION),
+    )
+
+
+def _normalize_for_fuzzy_digits(text: str) -> str:
+    return text.translate(_OCR_DIGIT_TRANSLATION)
+
+
+def _similarity(left: str, right: str) -> float:
+    return SequenceMatcher(None, left, right).ratio()
+
+
+def _best_substring_similarity(needle: str, haystack: str) -> float:
+    if not needle or not haystack:
+        return 0.0
+    if needle in haystack:
+        return 1.0
+    if len(haystack) <= len(needle):
+        return _similarity(needle, haystack)
+
+    best = 0.0
+    window = len(needle)
+    for index in range(0, len(haystack) - window + 1):
+        best = max(best, _similarity(needle, haystack[index : index + window]))
+        if best >= 0.98:
+            break
+    return best
+
+
+def _extract_signal_candidates(
+    raw_text: str,
+    *,
+    runtime_signals: dict[str, str],
+    known_error_type: str | None,
+) -> list[TraceSignalCandidate]:
+    candidates: list[TraceSignalCandidate] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    def add(kind: str, value: str, confidence: float, source_text: str, reason: str):
+        key = (kind, value, source_text)
+        if key in seen:
+            return
+        seen.add(key)
+        candidates.append(
+            TraceSignalCandidate(
+                kind=kind,
+                value=value,
+                confidence=round(confidence, 2),
+                source_text=source_text[:240],
+                reason=reason,
+            )
+        )
+
+    for line in raw_text.splitlines():
+        cleaned = _clean_error_line(line)
+        if not cleaned:
+            continue
+        normalized = _normalize_for_fuzzy_alpha(cleaned)
+
+        for error_type in _FUZZY_ERROR_TYPES:
+            if error_type == known_error_type:
+                continue
+            score = _best_substring_similarity(
+                _normalize_for_fuzzy_alpha(error_type), normalized
+            )
+            if score >= 0.86:
+                add(
+                    "error_type",
+                    error_type,
+                    score,
+                    cleaned,
+                    "fuzzy OCR-tolerant error type match",
+                )
+
+        for symbol in _FUZZY_RUNTIME_SYMBOLS:
+            if symbol.lower() in cleaned.lower():
+                continue
+            score = _best_substring_similarity(
+                _normalize_for_fuzzy_alpha(symbol), normalized
+            )
+            if score >= 0.84:
+                confidence = score if symbol.lower() in cleaned.lower() else min(score, 0.9)
+                add(
+                    "runtime_symbol",
+                    symbol,
+                    confidence,
+                    cleaned,
+                    "fuzzy OCR-tolerant runtime symbol match",
+                )
+
+        digit_normalized = _normalize_for_fuzzy_digits(cleaned)
+        for match in re.finditer(
+            r"(?:retC[o0]de|error[_ ]?c[o0]de(?: is)?|c[o0]de)\s*[=:]?\s*(?P<value>[A-Za-z0-9_-]{4,})",
+            digit_normalized,
+            flags=re.IGNORECASE,
+        ):
+            value = match.group("value")
+            if value == runtime_signals.get("error_code"):
+                continue
+            confidence = 0.82 if re.search(r"[A-Za-z]", match.group(0)) else 0.9
+            add(
+                "error_code",
+                value,
+                confidence,
+                cleaned,
+                "OCR-normalized error code candidate",
+            )
+
+    return candidates
 
 
 def _extract_pytest_line_number(text: str) -> int:
