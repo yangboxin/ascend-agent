@@ -362,10 +362,36 @@ class ModelRouter:
                         connection_error, self._base_url, self._model
                     )
                 ) from connection_error
+
             content = completion.choices[0].message.content
+            finish_reason = getattr(completion.choices[0], "finish_reason", "unknown")
+            if not content:
+                logger.warning(
+                    "Fallback response empty (model=%s, finish_reason=%s). "
+                    "Retrying once without appended JSON instruction.",
+                    self._model,
+                    finish_reason,
+                )
+                try:
+                    completion = self._client.chat.completions.create(
+                        model=self._model,
+                        messages=messages,
+                        max_tokens=max_tokens,
+                        temperature=temperature,
+                    )
+                except APIConnectionError as connection_error:
+                    raise RuntimeError(
+                        _format_connection_error(
+                            connection_error, self._base_url, self._model
+                        )
+                    ) from connection_error
+                content = completion.choices[0].message.content
+                finish_reason = getattr(completion.choices[0], "finish_reason", "unknown")
+
             if not content:
                 raise ValueError(
-                    f"Empty response from provider (model={self._model}). "
+                    f"Empty response from provider (model={self._model}, "
+                    f"finish_reason={finish_reason}). "
                     "Cannot parse structured output."
                 )
             return _parse_fallback_response(response_model, content)

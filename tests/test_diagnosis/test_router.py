@@ -431,7 +431,7 @@ def test_completion_no_fallback_non_400(monkeypatch):
 
 
 def test_completion_fallback_empty_content(monkeypatch):
-    from unittest.mock import Mock
+    from unittest.mock import Mock, call
     from openai import BadRequestError
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
@@ -446,8 +446,12 @@ def test_completion_fallback_empty_content(monkeypatch):
     mock_parse = Mock(side_effect=BadRequestError("Bad Request", response=Mock(status_code=400), body={}))
     router._client.chat.completions.parse = mock_parse
 
+    # Both the initial fallback and the retry return empty content
+    mock_choice = Mock()
+    mock_choice.message = Mock(content=None)
+    mock_choice.finish_reason = "stop"
     mock_create_response = Mock()
-    mock_create_response.choices = [Mock(message=Mock(content=None))]
+    mock_create_response.choices = [mock_choice]
     router._client.chat.completions.create = Mock(return_value=mock_create_response)
 
     try:
@@ -458,6 +462,15 @@ def test_completion_fallback_empty_content(monkeypatch):
         assert False, "Should have raised ValueError"
     except ValueError as e:
         assert "Empty response" in str(e)
+        assert "finish_reason=stop" in str(e)
+
+    # Should have retried once after the first empty response
+    assert router._client.chat.completions.create.call_count == 2
+    # First call includes the JSON instruction, retry does not
+    first_call_messages = router._client.chat.completions.create.call_args_list[0].kwargs["messages"]
+    assert "Return only one valid JSON object" in first_call_messages[-1]["content"]
+    retry_messages = router._client.chat.completions.create.call_args_list[1].kwargs["messages"]
+    assert len(retry_messages) == 1  # only the original user message, no appended instruction
 
 
 def test_chat_returns_raw_content(monkeypatch):
