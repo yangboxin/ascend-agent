@@ -47,6 +47,18 @@ class TraceSignalCandidate(BaseModel):
     reason: str = Field(description="Why the candidate was extracted")
 
 
+class TraceErrorEvent(BaseModel):
+    """A candidate error event found in the trace text."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str = Field(description="Error category, e.g. python_exception, ascend_runtime")
+    message: str = Field(description="Normalized event message")
+    confidence: float = Field(ge=0.0, le=1.0)
+    source_line: int = Field(ge=1, description="1-based line number in the raw trace")
+    source_text: str = Field(description="Original line that produced the event")
+
+
 class TraceInfo(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -56,6 +68,7 @@ class TraceInfo(BaseModel):
     causes: list[TraceCause] = Field(default_factory=list)
     runtime_signals: dict[str, str] = Field(default_factory=dict)
     signal_candidates: list[TraceSignalCandidate] = Field(default_factory=list)
+    error_events: list[TraceErrorEvent] = Field(default_factory=list)
     parse_warnings: list[str] = Field(default_factory=list)
     raw_text: str
 

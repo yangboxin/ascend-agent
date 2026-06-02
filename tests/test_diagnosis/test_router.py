@@ -301,6 +301,37 @@ def test_completion_fallback_coerces_plain_search_decision(monkeypatch):
     assert result.searches[0].pattern == "unknown_symbol"
 
 
+def test_completion_fallback_repairs_null_searches(monkeypatch):
+    from unittest.mock import Mock
+    from openai import BadRequestError
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr("openai.OpenAI.__init__", lambda self, **kwargs: None)
+    from ascend_agent.diagnosis.models import SearchDecision
+    from ascend_agent.diagnosis.router import ModelRouter
+
+    router = ModelRouter()
+    router._client.chat.completions.parse = Mock(
+        side_effect=BadRequestError(
+            "Bad Request", response=Mock(status_code=400), body={}
+        )
+    )
+
+    mock_create_response = Mock()
+    mock_create_response.choices = [
+        Mock(message=Mock(content='{"action": "search", "searches": null, "reasoning": "try"}'))
+    ]
+    router._client.chat.completions.create = Mock(return_value=mock_create_response)
+
+    result = router.completion(
+        messages=[{"role": "user", "content": "test"}],
+        response_model=SearchDecision,
+    )
+
+    assert result.action == "search"
+    assert result.searches == []
+
+
 def test_completion_fallback_coerces_search_as_diagnosis_error(monkeypatch):
     from unittest.mock import Mock
     from openai import BadRequestError
@@ -331,6 +362,46 @@ def test_completion_fallback_coerces_search_as_diagnosis_error(monkeypatch):
     assert result.hypotheses == []
     assert result.errors[0].stage == "hypothesis_generation"
     assert "unknown_symbol" in result.errors[0].details
+
+
+def test_completion_fallback_repairs_zero_evidence_line_numbers(monkeypatch):
+    from unittest.mock import Mock
+    from openai import BadRequestError
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setattr("openai.OpenAI.__init__", lambda self, **kwargs: None)
+    from ascend_agent.diagnosis.models import DiagnosisResult
+    from ascend_agent.diagnosis.router import ModelRouter
+
+    router = ModelRouter()
+    router._client.chat.completions.parse = Mock(
+        side_effect=BadRequestError(
+            "Bad Request", response=Mock(status_code=400), body={}
+        )
+    )
+
+    mock_create_response = Mock()
+    mock_create_response.choices = [
+        Mock(
+            message=Mock(
+                content=(
+                    '{"hypotheses":[{"root_cause":"x","confidence":0.8,'
+                    '"evidence":[{"file_path":"a.py","line_number":0,'
+                    '"code_snippet":"x","relevance":"r"}]}],'
+                    '"errors":[],"iterations_used":2}'
+                )
+            )
+        )
+    ]
+    router._client.chat.completions.create = Mock(return_value=mock_create_response)
+
+    result = router.completion(
+        messages=[{"role": "user", "content": "test"}],
+        response_model=DiagnosisResult,
+    )
+
+    assert result.hypotheses[0].evidence[0].line_number == 1
+    assert result.errors[0].stage == "llm_output_repair"
 
 
 def test_completion_no_fallback_non_400(monkeypatch):

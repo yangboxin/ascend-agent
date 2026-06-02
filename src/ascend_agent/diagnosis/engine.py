@@ -233,6 +233,11 @@ def _validate_diagnosis_evidence(
                     details=f"Hypothesis {index}: {hypothesis.root_cause[:120]}",
                 )
             )
+            valid_hypotheses.append(
+                hypothesis.model_copy(
+                    update={"confidence": min(hypothesis.confidence, 0.2)}
+                )
+            )
             continue
 
         for evidence in hypothesis.evidence:
@@ -248,11 +253,18 @@ def _validate_diagnosis_evidence(
                 )
             )
 
-        if valid_evidence:
-            valid_hypotheses.append(
-                hypothesis.model_copy(update={"evidence": valid_evidence})
+        valid_hypotheses.append(
+            hypothesis.model_copy(
+                update={
+                    "evidence": valid_evidence,
+                    "confidence": (
+                        hypothesis.confidence
+                        if valid_evidence
+                        else min(hypothesis.confidence, 0.2)
+                    ),
+                }
             )
-
+        )
     return result.model_copy(
         update={"hypotheses": valid_hypotheses, "errors": errors}
     )
@@ -292,6 +304,14 @@ def _build_user_prompt(context_doc) -> str:
     if trace:
         lines.append(f"Error type: {trace.error_type or 'unknown'}")
         lines.append(f"Error message: {trace.error_message or 'unknown'}")
+        if getattr(trace, "error_events", None):
+            lines.append("")
+            lines.append("Primary parsed error events:")
+            for event in trace.error_events[:5]:
+                lines.append(
+                    f"  - {event.kind} at raw line {event.source_line}: "
+                    f"{event.message} (confidence={event.confidence:.2f})"
+                )
         if getattr(trace, "signal_candidates", None):
             lines.append("")
             lines.append(
@@ -420,6 +440,13 @@ class Engine:
                 return self._generate_hypotheses(
                     messages, search_history, iterations_used
                 )
+
+            if not decision.searches:
+                logger.warning(
+                    "LLM requested search at iteration %d but provided no searches",
+                    iteration,
+                )
+                break
 
             # Execute searches up to safety limit per iteration
             for search in decision.searches[:3]:

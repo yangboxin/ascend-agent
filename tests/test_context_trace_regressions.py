@@ -4,6 +4,7 @@ from ascend_agent.context.trace import parse_stack_trace
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "traces"
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _trace(name: str) -> str:
@@ -94,3 +95,21 @@ def test_ocr_normalized_error_code_is_candidate_not_exact_signal():
     candidates = {(c.kind, c.value) for c in result.signal_candidates}
     assert ("error_code", "507011") in candidates
     assert result.runtime_signals == {}
+
+
+def test_production_ocr_log_prefers_earliest_ascend_runtime_error():
+    result = parse_stack_trace((ROOT / "test.log").read_text(encoding="utf-8", errors="replace"))
+
+    assert result.error_type == "AscendRuntimeError"
+    assert "current capture node does not support this operation" in result.error_message
+    assert result.error_events
+    assert result.error_events[0].source_line == 3
+    assert result.runtime_signals["error_code"] == "507011"
+
+
+def test_production_ocr_log_extracts_useful_traceback_frames():
+    result = parse_stack_trace((ROOT / "test.log").read_text(encoding="utf-8", errors="replace"))
+
+    frames = {(frame.file, frame.line) for frame in result.frames}
+    assert ("/vllm-workspace/vllm-ascend/vllm_ascend/compilation/acl_graph.py", 206) in frames
+    assert ("/vllm-workspace/vllm-ascend/vllm_ascend/worker/model_runner_v1.py", 1818) in frames

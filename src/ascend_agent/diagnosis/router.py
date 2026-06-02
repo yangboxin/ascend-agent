@@ -112,13 +112,57 @@ def _parse_fallback_response(
 ) -> BaseModel:
     json_content = _extract_json_object(content)
     if json_content is not None:
-        return response_model.model_validate_json(json_content)
+        data = json.loads(json_content)
+        data = _repair_response_data(response_model, data)
+        return response_model.model_validate(data)
 
     coerced = _coerce_plain_text_response(response_model, content)
     if coerced is not None:
         return coerced
 
-    return response_model.model_validate_json(content)
+    data = json.loads(content)
+    data = _repair_response_data(response_model, data)
+    return response_model.model_validate(data)
+
+
+def _repair_response_data(
+    response_model: type[BaseModel], data
+):
+    if response_model.__name__ == "SearchDecision":
+        if not isinstance(data, dict):
+            return data
+        if data.get("searches") is None:
+            data = dict(data)
+            data["searches"] = []
+        return data
+
+    if response_model.__name__ != "DiagnosisResult" or not isinstance(data, dict):
+        return data
+
+    repaired = dict(data)
+    errors = list(repaired.get("errors") or [])
+    for hypothesis_index, hypothesis in enumerate(repaired.get("hypotheses") or []):
+        if not isinstance(hypothesis, dict):
+            continue
+        evidence_items = hypothesis.get("evidence") or []
+        for evidence_index, evidence in enumerate(evidence_items):
+            if not isinstance(evidence, dict):
+                continue
+            line_number = evidence.get("line_number")
+            if isinstance(line_number, int) and line_number < 1:
+                evidence["line_number"] = 1
+                errors.append(
+                    {
+                        "stage": "llm_output_repair",
+                        "reason": "evidence line_number was below 1 and was repaired to 1",
+                        "details": (
+                            f"hypotheses.{hypothesis_index}.evidence."
+                            f"{evidence_index}.line_number={line_number}"
+                        ),
+                    }
+                )
+    repaired["errors"] = errors
+    return repaired
 
 
 class ProviderConfig(BaseModel):

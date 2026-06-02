@@ -277,6 +277,30 @@ class TestEngine:
         assert isinstance(result, DiagnosisResult)
         assert result.iterations_used == 3
 
+    def test_engine_forces_hypotheses_when_search_decision_has_no_searches(
+        self, mock_router, sample_context_doc, tmp_path: Path
+    ):
+        """A repaired search decision with searches=[] does not spin through the budget."""
+        mock_router.completion.side_effect = [
+            SearchDecision(
+                action="search",
+                searches=[],
+                reasoning="searches were missing from provider output",
+            ),
+            DiagnosisResult(
+                hypotheses=[],
+                errors=[],
+                iterations_used=1,
+            ),
+        ]
+
+        engine = Engine(router=mock_router, repo_path=str(tmp_path))
+        result = engine.diagnose(sample_context_doc)
+
+        assert isinstance(result, DiagnosisResult)
+        assert result.iterations_used == 1
+        assert len(mock_router.completion.call_args_list) == 2
+
     def test_engine_silent_no_clarifying_questions(self, mock_router, sample_context_doc, tmp_path: Path):
         """Engine never calls input() or prompts user for information."""
         mock_router.completion.side_effect = [

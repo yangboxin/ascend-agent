@@ -34,7 +34,10 @@ def test_diagnosis_rejects_nonexistent_evidence_file(mock_router, tmp_path):
 
     result = Engine(router=mock_router, repo_path=str(tmp_path)).diagnose(context)
 
-    assert result.hypotheses == []
+    assert len(result.hypotheses) == 1
+    assert result.hypotheses[0].root_cause == "The model invented evidence."
+    assert result.hypotheses[0].evidence == []
+    assert result.hypotheses[0].confidence == 0.2
     assert result.errors
     assert result.errors[0].stage == "evidence_validation"
 
@@ -76,7 +79,10 @@ def test_diagnosis_rejects_evidence_with_missing_snippet(mock_router, tmp_path):
 
     result = Engine(router=mock_router, repo_path=str(tmp_path)).diagnose(context)
 
-    assert result.hypotheses == []
+    assert len(result.hypotheses) == 1
+    assert result.hypotheses[0].root_cause == "The model cited the wrong code."
+    assert result.hypotheses[0].evidence == []
+    assert result.hypotheses[0].confidence == 0.2
     assert result.errors[0].stage == "evidence_validation"
     assert "snippet" in result.errors[0].reason
 

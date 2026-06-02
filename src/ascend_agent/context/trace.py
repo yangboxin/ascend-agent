@@ -1,17 +1,26 @@
 import pathlib
 import re
 import sys
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 
 from ascend_agent.context.models import (
     TraceCause,
     TraceEntry,
+    TraceErrorEvent,
     TraceInfo,
     TraceSignalCandidate,
 )
 
 _frame_pattern = re.compile(
     r'File "(?P<file>[^"]+)", line (?P<line>\d+)(?:, in (?P<function>\S+))?'
+)
+
+_ocr_frame_pattern = re.compile(
+    r"File\s+[\"'“”’‘]?(?P<file>/[^\"'“”’‘\t]+?\.py)[\"'“”’‘]?"
+    r"[,，\]\s]*(?:line|Line|\[ine|tine)\s+(?P<line>\d+)"
+    r"(?:[,，\s]+in\s+(?P<function>[A-Za-z_][\w ]{0,80}))?",
+    flags=re.IGNORECASE,
 )
 
 _python_error_pattern = re.compile(
@@ -36,6 +45,28 @@ _ascend_error_pattern = re.compile(
 _pytest_failed_pattern = re.compile(
     r"^FAILED\s+(?P<file>[^:\s]+)::(?P<function>[^\s]+)\s+-\s+(?P<rest>.*)$"
 )
+
+_ascend_actionable_pattern = re.compile(
+    r"(?:rt\w*(?:mencpy|memcpy|stream|event|query)|acl\w*|synchroni[sz]e|"
+    r"current capture (?:mode|node)|model stream execute failed|"
+    r"does not support this operation|runtime result|ErrCode|InnerCode|EE9999)",
+    flags=re.IGNORECASE,
+)
+
+_generic_exception_noise_pattern = re.compile(
+    r"^(?:Error:\s*Exception|Exception raised from query\b)",
+    flags=re.IGNORECASE,
+)
+
+
+@dataclass
+class _ParsedError:
+    kind: str
+    error_type: str
+    message: str
+    confidence: float
+    source_line: int
+    source_text: str
 
 _FUZZY_ERROR_TYPES = (
     "RuntimeError",
@@ -82,34 +113,35 @@ _OCR_DIGIT_TRANSLATION = str.maketrans(
 
 
 def parse_stack_trace(raw_text: str) -> TraceInfo:
-    frames = []
-    python_errors: list[tuple[str, str]] = []
-    pytest_errors: list[tuple[str, str]] = []
-    ascend_errors: list[tuple[str, str]] = []
-    log_errors: list[tuple[str, str]] = []
-    phrase_errors: list[tuple[str, str]] = []
+    frames = _extract_frames(raw_text)
+    python_errors: list[_ParsedError] = []
+    pytest_errors: list[_ParsedError] = []
+    ascend_errors: list[_ParsedError] = []
+    log_errors: list[_ParsedError] = []
+    phrase_errors: list[_ParsedError] = []
     parse_warnings: list[str] = []
 
-    for match in _frame_pattern.finditer(raw_text):
-        frames.append(TraceEntry(
-            file=match.group("file"),
-            line=int(match.group("line")),
-            function=match.group("function"),
-            text=match.group(0),
-        ))
-
-    for line in raw_text.strip().split("\n"):
+    for line_no, line in enumerate(raw_text.strip().split("\n"), 1):
         failed_match = _pytest_failed_pattern.match(line.strip())
         if failed_match:
             rest = failed_match.group("rest")
-            line_no = _extract_pytest_line_number(rest)
+            test_line_no = _extract_pytest_line_number(rest)
             parsed_pytest_error = _parse_pytest_failure_error(rest)
             if parsed_pytest_error:
-                pytest_errors.append(parsed_pytest_error)
+                pytest_errors.append(
+                    _make_error(
+                        "pytest_failure",
+                        parsed_pytest_error[0],
+                        parsed_pytest_error[1],
+                        0.9,
+                        line_no,
+                        line,
+                    )
+                )
             frames.append(
                 TraceEntry(
                     file=failed_match.group("file"),
-                    line=line_no,
+                    line=test_line_no,
                     function=failed_match.group("function"),
                     text=line.strip(),
                 )
@@ -117,22 +149,59 @@ def parse_stack_trace(raw_text: str) -> TraceInfo:
 
         parsed_python_error = _parse_python_error_line(line)
         if parsed_python_error:
-            python_errors.append(parsed_python_error)
+            confidence = 0.45 if _is_generic_exception_noise(line) else 0.85
+            python_errors.append(
+                _make_error(
+                    "python_exception",
+                    parsed_python_error[0],
+                    parsed_python_error[1],
+                    confidence,
+                    line_no,
+                    line,
+                )
+            )
             continue
 
         parsed_ascend_error = _parse_ascend_error_line(line)
         if parsed_ascend_error:
-            ascend_errors.append(parsed_ascend_error)
+            ascend_errors.append(
+                _make_error(
+                    "ascend_runtime",
+                    parsed_ascend_error[0],
+                    parsed_ascend_error[1],
+                    0.95,
+                    line_no,
+                    line,
+                )
+            )
             continue
 
         parsed_log_error = _parse_log_error_line(line)
         if parsed_log_error:
-            log_errors.append(parsed_log_error)
+            log_errors.append(
+                _make_error(
+                    "log_error",
+                    parsed_log_error[0],
+                    parsed_log_error[1],
+                    0.65,
+                    line_no,
+                    line,
+                )
+            )
             continue
 
         parsed_phrase_error = _parse_error_phrase_line(line)
         if parsed_phrase_error:
-            phrase_errors.append(parsed_phrase_error)
+            phrase_errors.append(
+                _make_error(
+                    "error_phrase",
+                    parsed_phrase_error[0],
+                    parsed_phrase_error[1],
+                    0.55,
+                    line_no,
+                    line,
+                )
+            )
 
     errors = _select_error_layer(
         python_errors=python_errors,
@@ -142,8 +211,13 @@ def parse_stack_trace(raw_text: str) -> TraceInfo:
         phrase_errors=phrase_errors,
     )
     error_type, error_message = _select_primary_error(errors)
-    causes = _extract_causes(python_errors, error_type, error_message)
+    causes = _extract_causes(
+        [(error.error_type, error.message) for error in python_errors],
+        error_type,
+        error_message,
+    )
     runtime_signals = _extract_runtime_signals(raw_text)
+    error_events = _to_trace_error_events(errors)
     signal_candidates = _extract_signal_candidates(
         raw_text,
         runtime_signals=runtime_signals,
@@ -162,9 +236,86 @@ def parse_stack_trace(raw_text: str) -> TraceInfo:
         causes=causes,
         runtime_signals=runtime_signals,
         signal_candidates=signal_candidates,
+        error_events=error_events,
         parse_warnings=parse_warnings,
         raw_text=raw_text,
     )
+
+
+def _extract_frames(raw_text: str) -> list[TraceEntry]:
+    frames: list[TraceEntry] = []
+    seen: set[tuple[str | None, int | None, str | None, str]] = set()
+    standard_spans: list[tuple[int, int]] = []
+
+    def add(file: str | None, line: int | None, function: str | None, text: str):
+        normalized_function = _normalize_function_name(function)
+        key = (file, line, normalized_function, text)
+        if key in seen:
+            return
+        seen.add(key)
+        frames.append(
+            TraceEntry(
+                file=file,
+                line=line,
+                function=normalized_function,
+                text=text,
+            )
+        )
+
+    for match in _frame_pattern.finditer(raw_text):
+        standard_spans.append(match.span())
+        add(
+            match.group("file"),
+            int(match.group("line")),
+            match.group("function"),
+            match.group(0),
+        )
+
+    for match in _ocr_frame_pattern.finditer(raw_text):
+        if any(
+            match.start() >= start and match.end() <= end
+            for start, end in standard_spans
+        ):
+            continue
+        add(
+            _normalize_ocr_path(match.group("file")),
+            int(match.group("line")),
+            match.group("function"),
+            match.group(0),
+        )
+
+    return frames
+
+
+def _normalize_ocr_path(path: str) -> str:
+    cleaned = path.strip()
+    cleaned = cleaned.replace(" ", "_")
+    cleaned = cleaned.replace("/vllm_workspace/", "/vllm-workspace/")
+    cleaned = cleaned.replace("/vltm_workspace/", "/vllm-workspace/")
+    cleaned = cleaned.replace("/vilm-workspace/", "/vllm-workspace/")
+    cleaned = cleaned.replace("/vlla-workspace/", "/vllm-workspace/")
+    cleaned = cleaned.replace("/LLm_workspace/", "/vllm-workspace/")
+    cleaned = cleaned.replace("/Vlla-ascend/", "/vllm-ascend/")
+    cleaned = cleaned.replace("/VlIn_ascend/", "/vllm_ascend/")
+    cleaned = cleaned.replace("/vilm_ascend/", "/vllm_ascend/")
+    cleaned = cleaned.replace("/vlla_ascend/", "/vllm_ascend/")
+    cleaned = cleaned.replace("/vllm-workspace/vllm_ascend/", "/vllm-workspace/vllm-ascend/")
+    cleaned = cleaned.replace("/vllm-workspace/vlla_ascend/", "/vllm-workspace/vllm-ascend/")
+    cleaned = cleaned.replace("/Vllm_ascend/", "/vllm_ascend/")
+    cleaned = cleaned.replace("/Vlla_ascend/", "/vllm_ascend/")
+    cleaned = cleaned.replace("/vlla_ascend/", "/vllm_ascend/")
+    cleaned = cleaned.replace("/Vllm/", "/vllm/")
+    cleaned = cleaned.replace("/Vlla/", "/vllm/")
+    cleaned = cleaned.replace("/VlLa/", "/vllm/")
+    return cleaned
+
+
+def _normalize_function_name(function: str | None) -> str | None:
+    if not function:
+        return function
+    cleaned = function.strip()
+    cleaned = re.sub(r"\s+", "_", cleaned)
+    return cleaned[:80] or None
 
 
 def _clean_error_line(line: str) -> str:
@@ -185,6 +336,10 @@ def _parse_python_error_line(line: str) -> tuple[str, str] | None:
     return match.group("type"), match.group("message").strip()
 
 
+def _is_generic_exception_noise(line: str) -> bool:
+    return _generic_exception_noise_pattern.search(_clean_error_line(line)) is not None
+
+
 def _parse_pytest_failure_error(text: str) -> tuple[str, str] | None:
     parsed = _parse_python_error_line(text)
     if parsed:
@@ -197,9 +352,14 @@ def _parse_pytest_failure_error(text: str) -> tuple[str, str] | None:
 def _parse_ascend_error_line(line: str) -> tuple[str, str] | None:
     cleaned = _clean_error_line(line)
     match = _ascend_error_pattern.search(cleaned)
-    if not match:
+    if match:
+        return "AscendRuntimeError", match.group("message").strip()
+
+    if not _ascend_actionable_pattern.search(cleaned):
         return None
-    return "AscendRuntimeError", match.group("message").strip()
+    if re.search(r"\b(?:INFO|metrics|throughput|cache hit)\b", cleaned, re.IGNORECASE):
+        return None
+    return "AscendRuntimeError", cleaned
 
 
 def _parse_log_error_line(line: str) -> tuple[str, str] | None:
@@ -227,33 +387,95 @@ def _parse_error_phrase_line(line: str) -> tuple[str, str] | None:
 
 def _select_error_layer(
     *,
-    python_errors: list[tuple[str, str]],
-    pytest_errors: list[tuple[str, str]],
-    ascend_errors: list[tuple[str, str]],
-    log_errors: list[tuple[str, str]],
-    phrase_errors: list[tuple[str, str]],
-) -> list[tuple[str, str]]:
-    for layer in (
-        python_errors,
-        pytest_errors,
-        ascend_errors,
-        log_errors,
-        phrase_errors,
+    python_errors: list[_ParsedError],
+    pytest_errors: list[_ParsedError],
+    ascend_errors: list[_ParsedError],
+    log_errors: list[_ParsedError],
+    phrase_errors: list[_ParsedError],
+) -> list[_ParsedError]:
+    actionable_python = [
+        error for error in python_errors
+        if error.confidence >= 0.7 and not _is_low_value_event(error)
+    ]
+    if actionable_python and (
+        not ascend_errors
+        or min(error.source_line for error in actionable_python)
+        < min(error.source_line for error in ascend_errors)
     ):
-        if layer:
-            return layer
+        return python_errors
+
+    actionable_ascend = [
+        error for error in ascend_errors
+        if error.confidence >= 0.7 and not _is_low_value_event(error)
+    ]
+    if actionable_ascend:
+        earliest_line = min(error.source_line for error in actionable_ascend)
+        return [
+            error
+            for error in actionable_ascend
+            if error.source_line == earliest_line
+        ]
+    if pytest_errors:
+        return pytest_errors
+    if python_errors:
+        return python_errors
+    candidates = log_errors + phrase_errors
+    if candidates:
+        best = max(candidates, key=lambda error: (error.confidence, -error.source_line))
+        return [best]
     return []
 
 
-def _select_primary_error(errors: list[tuple[str, str]]) -> tuple[str | None, str | None]:
+def _select_primary_error(errors: list[_ParsedError]) -> tuple[str | None, str | None]:
     if not errors:
         return None, None
 
-    for error_type, error_message in errors:
-        if error_type == "ExceptionGroup":
-            return error_type, error_message
+    for error in errors:
+        if error.error_type == "ExceptionGroup":
+            return error.error_type, error.message
 
-    return errors[-1]
+    if all(error.kind == "python_exception" for error in errors):
+        primary = errors[-1]
+        return primary.error_type, primary.message
+
+    primary = max(errors, key=lambda error: (error.confidence, -error.source_line))
+    return primary.error_type, primary.message
+
+
+def _make_error(
+    kind: str,
+    error_type: str,
+    message: str,
+    confidence: float,
+    source_line: int,
+    source_text: str,
+) -> _ParsedError:
+    return _ParsedError(
+        kind=kind,
+        error_type=error_type,
+        message=message.strip(),
+        confidence=confidence,
+        source_line=source_line,
+        source_text=source_text.strip()[:500],
+    )
+
+
+def _is_low_value_event(error: _ParsedError) -> bool:
+    text = f"{error.error_type}: {error.message}"
+    return _generic_exception_noise_pattern.search(text) is not None
+
+
+def _to_trace_error_events(errors: list[_ParsedError]) -> list[TraceErrorEvent]:
+    return [
+        TraceErrorEvent(
+            kind=error.kind,
+            message=error.message,
+            confidence=round(error.confidence, 2),
+            source_line=error.source_line,
+            source_text=error.source_text,
+        )
+        for error in errors
+    ]
 
 
 def _extract_causes(
