@@ -1,0 +1,91 @@
+[root@worker-66-83 ascend-agent]# ascend-agent diagnose run ../ --trace test.log 
+Ascend Diagnostic Agent
+Building context...
+                                                                                                                                                                             Repository Info                                                                                                                                                                             
+┏━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Property  ┃ Value                                                                                                                                                                                                                                                                                                                                                     ┃
+┡━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ Path      │ /vllm-workspace                                                                                                                                                                                                                                                                                                                                           │
+│ Language  │ python                                                                                                                                                                                                                                                                                                                                                    │
+│ Files     │ 4312                                                                                                                                                                                                                                                                                                                                                      │
+│ Structure │ Mooncake/benchmarks/xypd_benchmarks/proxy_demo.py, Mooncake/benchmarks/xypd_benchmarks/vllm-benchmarks/parse_results.py, Mooncake/docs/source/autodoc2_docstring_parser.py, Mooncake/docs/source/conf.py, Mooncake/extern/pybind11/docs/benchmark.py, Mooncake/extern/pybind11/docs/conf.py, Mooncake/extern/pybind11/noxfile.py,                         │
+│           │ Mooncake/extern/pybind11/pybind11/__init__.py, Mooncake/extern/pybind11/pybind11/__main__.py, Mooncake/extern/pybind11/pybind11/_version.py, ...                                                                                                                                                                                                          │
+└───────────┴───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+Error: Exception
+raised from query at build/CNakeFiles/torch npu.dir/compiler depend.ts:83 (most recent call first):
+Uncertain signals: error_code=-107030 (0.82), error_code=-0x703001c (0.82), error_code=-107030 (0.82), error_code=-0x703001c (0.82), error_code=Err0r (0.82)
+
+Stack Trace:
+  /usr/local/python3.11.14/Lib/python3.11/multiprocessing/process.py:108 run
+  /vllm-workspace/vllm-ascend/vllm ascend/worker/model_runner v1.py:1818 model
+  /vilm-workspace/vllm-ascend/vllm ascend/compilation/acl graph.py:206 _call
+
+Environment: Python 3.11.1 on linux
+
+Running diagnosis...
+TLS certificate verification is disabled via ASCEND_SSL_VERIFY=false. Use only for trusted internal networks.
+Structured output not supported by provider (model=deepseek-v4-flash, status=400). Falling back to manual JSON parsing.
+Starting Ascend Agent MCP server...
+Registered tools: code_search, edit_file, exec_shell, run_test
+Listening on STDIO transport...
+[06/01/26 09:23:05] INFO     Processing request of type CallToolRequest                                                                                                                                                                                                                                                                                     server.py:727
+[06/01/26 09:23:14] INFO     Processing request of type ListToolsRequest                                                                                                                                                                                                                                                                                    server.py:727
+Starting Ascend Agent MCP server...
+Registered tools: code_search, edit_file, exec_shell, run_test
+Listening on STDIO transport...
+[06/01/26 09:23:15] INFO     Processing request of type CallToolRequest                                                                                                                                                                                                                                                                                     server.py:727
+[06/01/26 09:23:22] INFO     Processing request of type ListToolsRequest                                                                                                                                                                                                                                                                                    server.py:727
+Starting Ascend Agent MCP server...
+Registered tools: code_search, edit_file, exec_shell, run_test
+Listening on STDIO transport...
+[06/01/26 09:23:23] INFO     Processing request of type CallToolRequest                                                                                                                                                                                                                                                                                     server.py:727
+[06/01/26 09:23:30] INFO     Processing request of type ListToolsRequest                                                                                                                                                                                                                                                                                    server.py:727
+Structured output not supported by provider (model=deepseek-v4-flash, status=400). Falling back to manual JSON parsing.
+LLM call failed at iteration 2: 1 validation error for SearchDecision
+searches
+  Input should be a valid array [type=list_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.13/v/list_type
+Structured output not supported by provider (model=deepseek-v4-flash, status=400). Falling back to manual JSON parsing.
+Hypothesis generation failed: 5 validation errors for DiagnosisResult
+hypotheses.0.evidence.2.line_number
+  Input should be greater than or equal to 1 [type=greater_than_equal, input_value=0, input_type=int]
+    For further information visit https://errors.pydantic.dev/2.13/v/greater_than_equal
+hypotheses.0.evidence.3.line_number
+  Input should be greater than or equal to 1 [type=greater_than_equal, input_value=0, input_type=int]
+    For further information visit https://errors.pydantic.dev/2.13/v/greater_than_equal
+hypotheses.1.evidence.1.line_number
+  Input should be greater than or equal to 1 [type=greater_than_equal, input_value=0, input_type=int]
+    For further information visit https://errors.pydantic.dev/2.13/v/greater_than_equal
+hypotheses.1.evidence.2.line_number
+  Input should be greater than or equal to 1 [type=greater_than_equal, input_value=0, input_type=int]
+    For further information visit https://errors.pydantic.dev/2.13/v/greater_than_equal
+hypotheses.2.evidence.1.line_number
+  Input should be greater than or equal to 1 [type=greater_than_equal, input_value=0, input_type=int]
+    For further information visit https://errors.pydantic.dev/2.13/v/greater_than_equal
+
+Diagnosis Results
+Search iterations used: 2/3
+╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── Partial Failures ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ hypothesis_generation: LLM call failed                                                                                                                                                                                                                                                                                                                                │
+│ 5 validation errors for DiagnosisResult                                                                                                                                                                                                                                                                                                                               │
+│ hypotheses.0.evidence.2.line_number                                                                                                                                                                                                                                                                                                                                   │
+│   Input should be greater than or equal to 1                                                                                                                                                                                                                                                                                                                          │
+│     For further information visit https://errors.pydantic.dev/2.13/v/greater_than_equal                                                                                                                                                                                                                                                                               │
+│ hypotheses.0.evidence.3.line_number                                                                                                                                                                                                                                                                                                                                   │
+│   Input should be greater than or equal to 1                                                                                                                                                                                                                                                                                                                          │
+│     For further information visit https://errors.pydantic.dev/2.13/v/greater_than_equal                                                                                                                                                                                                                                                                               │
+│ hypotheses.1.evidence.1.line_number                                                                                                                                                                                                                                                                                                                                   │
+│   Input should be greater than or equal to 1                                                                                                                                                                                                                                                                                                                          │
+│     For further information visit https://errors.pydantic.dev/2.13/v/greater_than_equal                                                                                                                                                                                                                                                                               │
+│ hypotheses.1.evidence.2.line_number                                                                                                                                                                                                                                                                                                                                   │
+│   Input should be greater than or equal to 1                                                                                                                                                                                                                                                                                                                          │
+│     For further information visit https://errors.pydantic.dev/2.13/v/greater_than_equal                                                                                                                                                                                                                                                                               │
+│ hypotheses.2.evidence.1.line_number                                                                                                                                                                                                                                                                                                                                   │
+│   Input should be greater than or equal to 1                                                                                                                                                                                                                                                                                                                          │
+│     For further information visit https://errors.pydantic.dev/2.13/v/greater_than_equal                                                                                                                                                                                                                                                                               │
+╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+No hypotheses could be generated.
+See Partial Failures above for details.
+
+Diagnosis complete.
