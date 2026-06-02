@@ -15,6 +15,7 @@ from pathlib import Path
 from ascend_agent.config import Settings
 from ascend_agent.diagnosis.models import DiagnosisResult, ReproductionResult
 from ascend_agent.diagnosis.router import ModelRouter
+from ascend_agent.tools.shell_exec import exec_shell
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +61,7 @@ class ReproductionEngine:
             logger.warning("Venve detection failed: %s", exc)
             venv_env = {}
 
-        from ascend_agent.tools.shell_exec import exec_shell
-
+        last_error = ""
         for i, hypothesis in enumerate(diagnosis.hypotheses):
             command = ""
             try:
@@ -109,12 +109,13 @@ class ReproductionEngine:
 
             except Exception as exc:
                 logger.error("Reproduction failed for hypothesis %d/%d: %s", i + 1, len(diagnosis.hypotheses), exc)
+                last_error = str(exc)
                 continue
 
         return ReproductionResult(
             status="error",
             command="",
-            stderr="No hypotheses could be executed",
+            stderr=last_error or "No hypotheses could be executed",
             exit_code=-1,
             duration_seconds=0.0,
             hypothesis_id_tested=-1,

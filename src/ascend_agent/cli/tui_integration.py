@@ -42,6 +42,8 @@ def run_tui_with_llm(
     if not model:
         model = _resolve_model(provider)
 
+    global _active_tui
+
     # Create the TUI
     tui = AscendTUI(
         provider=provider,
@@ -51,7 +53,7 @@ def run_tui_with_llm(
 
     # Set up the LLM callback
     tui.set_on_user_input(
-        lambda text: _handle_user_input(tui, provider, text)
+        lambda text: _handle_user_input(tui, text)
     )
 
     # Store reference for Ctrl+C interrupt handling
@@ -65,7 +67,7 @@ def run_tui_with_llm(
 _active_tui: Optional[AscendTUI] = None
 
 
-def _handle_user_input(tui: AscendTUI, provider: str, text: str) -> None:
+def _handle_user_input(tui: AscendTUI, text: str) -> None:
     """Handle user text input — send to LLM and stream response.
 
     Called by the TUI when the user submits non-command text.
@@ -74,9 +76,10 @@ def _handle_user_input(tui: AscendTUI, provider: str, text: str) -> None:
 
     Args:
         tui: The active AscendTUI instance.
-        provider: LLM provider name.
         text: The user's message text.
     """
+    provider = tui._provider or _resolve_provider()
+
     # Build messages from conversation history
     messages = [{"role": "system", "content": _SYSTEM_PROMPT}]
     for msg in tui.messages:

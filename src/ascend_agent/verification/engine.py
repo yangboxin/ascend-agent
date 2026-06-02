@@ -11,12 +11,14 @@ workflow and returns a structured Pydantic result.
 
 import json
 import logging
+import shlex
 import time
 from pathlib import Path
 
 from ascend_agent.config import Settings
 from ascend_agent.diagnosis.models import ReproductionResult, TestDetail, VerificationResult
 from ascend_agent.diagnosis.router import ModelRouter
+from ascend_agent.tools.shell_exec import exec_shell
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +76,8 @@ class VerificationEngine:
 
             # Detect test framework
             framework = self._detect_framework()
+            if framework is None and "pytest" in reproduction.command:
+                framework = "pytest"
             if framework is None:
                 return VerificationResult(
                     status="error",
@@ -103,6 +107,8 @@ class VerificationEngine:
 
             # Map changed files to test files
             test_files = self._map_test_files(reproduction.files_changed)
+            if not test_files:
+                test_files = self._test_files_from_command(reproduction.command)
             if not test_files:
                 return VerificationResult(
                     status="no_tests",
@@ -135,9 +141,6 @@ class VerificationEngine:
                 f"{test_files_str} --json-report --json-report-file=none "
                 f"--json-report-summary"
             )
-
-            # Execute via exec_shell (lazy import)
-            from ascend_agent.tools.shell_exec import exec_shell
 
             start = time.monotonic()
             result_json = await exec_shell(command, timeout=self._settings.test_timeout)
@@ -216,7 +219,7 @@ class VerificationEngine:
                 exit_code=exit_code,
                 duration_seconds=duration,
                 files_tested=test_files,
-                stdout=result.get("stdout", ""),
+                stdout=shell_result.get("stdout", ""),
             )
 
         except Exception as exc:
@@ -315,12 +318,13 @@ class VerificationEngine:
                     if found:
                         continue
 
-            # Tier 3: Module-level fallback — try the entire test directory
-            if str(path).startswith("src/"):
-                relative = path.relative_to("src")
-                test_dir = Path("tests") / relative.parent
-                if (self._repo_path / test_dir).exists():
-                    test_files.append(str(test_dir))
+                tests_root = self._repo_path / "tests"
+                if tests_root.exists():
+                    for pattern in (f"test_{stem}.py", f"{stem}_test.py"):
+                        for matched in tests_root.rglob(pattern):
+                            rel_path = str(matched.relative_to(self._repo_path))
+                            if rel_path not in test_files:
+                                test_files.append(rel_path)
 
         # Deduplicate while preserving order
         seen = set()
@@ -332,6 +336,18 @@ class VerificationEngine:
 
         return deduped
 
+    def _test_files_from_command(self, command: str) -> list[str]:
+        """Extract explicit pytest file targets from a reproduction command."""
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            tokens = command.split()
+        result = []
+        for token in tokens:
+            if token.startswith("tests/") and token.endswith(".py"):
+                result.append(token)
+        return result
+
     def _validate_path(self, path_str: str) -> bool:
         """Check that a path resolves within the repo boundary.
 
@@ -339,6 +355,6 @@ class VerificationEngine:
         """
         try:
             test_path = (self._repo_path / path_str).resolve()
-            return str(test_path).startswith(str(self._repo_path))
+            return str(test_path).startswith(str(self._repo_path)) and test_path.exists()
         except (ValueError, OSError):
             return False

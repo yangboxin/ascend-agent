@@ -357,7 +357,7 @@ class TestTUIAppConstruction:
 
         assert tui._app is not None
         # 4 children: status, content, separator, input
-        children = tui._app.layout.container.children
+        children = tui._app.layout.container.content.children
         assert len(children) == 4
 
     def test_stream_start(self):
@@ -367,3 +367,119 @@ class TestTUIAppConstruction:
         assert manager is not None
         assert buf is not None
         assert manager.is_streaming is False  # Not started yet
+
+    def test_models_command_opens_picker(self, tmp_path, monkeypatch):
+        from ascend_agent.cli import config_manager
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        monkeypatch.setattr(config_manager, "CONFIG_DIR", tmp_path)
+        monkeypatch.setattr(config_manager, "CONFIG_FILE", tmp_path / "providers.json")
+
+        tui = AscendTUI(provider="openai", model="openai/gpt-5.5")
+        tui._handle_slash_command("/models")
+
+        assert tui._model_picker_active is True
+        assert any(model_id == "openai/gpt-5.5" for model_id, _, _ in tui._model_choices)
+
+    def test_models_use_updates_tui_status(self, tmp_path, monkeypatch):
+        from ascend_agent.cli import config_manager
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        monkeypatch.setattr(config_manager, "CONFIG_DIR", tmp_path)
+        monkeypatch.setattr(config_manager, "CONFIG_FILE", tmp_path / "providers.json")
+
+        tui = AscendTUI(provider="openai", model="openai/gpt-5.5")
+        tui._handle_slash_command("/models use deepseek/deepseek-v4-pro")
+
+        assert tui._provider == "deepseek"
+        assert tui._model == "deepseek/deepseek-v4-pro"
+        assert "Model selected: deepseek/deepseek-v4-pro" in tui.messages[-1].content
+
+    def test_slash_command_completer_lists_commands(self):
+        from prompt_toolkit.document import Document
+        from ascend_agent.cli.tui.app import SlashCommandCompleter
+
+        completions = list(SlashCommandCompleter().get_completions(Document("/mo"), None))
+
+        assert any(completion.text.startswith("/models") for completion in completions)
+
+    def test_slash_command_completer_lists_model_ids(self, tmp_path, monkeypatch):
+        from prompt_toolkit.document import Document
+        from ascend_agent.cli import config_manager
+        from ascend_agent.cli.tui.app import SlashCommandCompleter
+
+        monkeypatch.setattr(config_manager, "CONFIG_DIR", tmp_path)
+        monkeypatch.setattr(config_manager, "CONFIG_FILE", tmp_path / "providers.json")
+
+        completions = list(SlashCommandCompleter().get_completions(Document("/models use deep"), None))
+
+        assert any(completion.text == "deepseek/deepseek-v4-flash" for completion in completions)
+
+    def test_up_down_history_when_no_completion(self):
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        tui = AscendTUI(provider="test", model="test-model")
+        tui._build_app()
+        tui._history.add("first")
+        tui._history.add("second")
+        tui._input_buffer.text = "current"
+
+        up_binding = next(
+            binding
+            for binding in tui._app.key_bindings.bindings
+            if any(str(key) in ("up", "Keys.Up") for key in binding.keys)
+        )
+        up_binding.handler(None)
+
+        assert tui._input_buffer.text == "second"
+
+    def test_first_submitted_input_is_added_to_history(self):
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        tui = AscendTUI(provider="test", model="test-model")
+        tui.set_on_user_input(lambda text: None)
+        tui._build_app()
+        tui._input_buffer.text = "first"
+
+        tui._handle_input_accept(tui._input_buffer)
+
+        assert tui._history.get_all()[-1] == "first"
+
+    def test_up_down_completion_when_completion_menu_open(self):
+        from types import SimpleNamespace
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        tui = AscendTUI(provider="test", model="test-model")
+        tui._build_app()
+        tui._input_buffer.text = "/"
+        tui._input_buffer.complete_state = SimpleNamespace(current_completion="first")
+        called = {"next": 0}
+        tui._input_buffer.complete_next = lambda: called.update(next=called["next"] + 1)
+
+        down_binding = next(
+            binding
+            for binding in tui._app.key_bindings.bindings
+            if any(str(key) in ("down", "Keys.Down") for key in binding.keys)
+        )
+        down_binding.handler(None)
+
+        assert called["next"] == 1
+
+    def test_non_slash_stale_completion_does_not_block_history(self):
+        from types import SimpleNamespace
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        tui = AscendTUI(provider="test", model="test-model")
+        tui._build_app()
+        tui._history.add("previous")
+        tui._input_buffer.text = "current"
+        tui._input_buffer.complete_state = SimpleNamespace(current_completion="stale")
+
+        up_binding = next(
+            binding
+            for binding in tui._app.key_bindings.bindings
+            if any(str(key) in ("up", "Keys.Up") for key in binding.keys)
+        )
+        up_binding.handler(None)
+
+        assert tui._input_buffer.text == "previous"

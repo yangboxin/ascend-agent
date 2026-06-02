@@ -8,6 +8,9 @@ AI-powered diagnostic tool for the Ascend maintenance team — analyze stack tra
 # Install
 pip install -e ".[dev]"
 
+# Launch the full-screen TUI
+asd
+
 # Show available commands
 ascend-agent --help
 
@@ -34,7 +37,7 @@ cd ascend-agent
 pip install -e ".[dev]"
 ```
 
-This installs the `ascend-agent` CLI and all dependencies (Typer, Rich, Pydantic, MCP SDK).
+This installs the `asd` and `ascend-agent` CLI commands. Run `asd` from a terminal to start the full-screen TUI directly; no separate server process is required.
 
 ## Usage
 

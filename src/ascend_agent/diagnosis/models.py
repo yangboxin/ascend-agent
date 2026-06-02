@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Evidence(BaseModel):
@@ -180,6 +180,24 @@ class VerificationResult(BaseModel):
     duration_seconds: float = Field(ge=0.0, description="Wall-clock duration of test execution")
     files_tested: list[str] = Field(default_factory=list, description="Repo-relative paths of test files that were executed")
     stdout: str = Field(default="", description="Raw test output (if parsing fails)")
+
+    @model_validator(mode="after")
+    def _derive_test_counts(self) -> "VerificationResult":
+        """Populate summary counters from per-test details when omitted."""
+        if self.tests and not any(
+            [self.tests_run, self.passed, self.failed, self.errors, self.skipped, self.xfailed, self.xpassed]
+        ):
+            counts: dict[str, int] = {}
+            for test in self.tests:
+                counts[test.outcome] = counts.get(test.outcome, 0) + 1
+            self.passed = counts.get("passed", 0)
+            self.failed = counts.get("failed", 0)
+            self.errors = counts.get("error", 0) + counts.get("errors", 0)
+            self.skipped = counts.get("skipped", 0)
+            self.xfailed = counts.get("xfailed", 0)
+            self.xpassed = counts.get("xpassed", 0)
+            self.tests_run = sum(counts.values())
+        return self
 
 
 class ReproductionResult(BaseModel):

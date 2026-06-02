@@ -49,6 +49,8 @@ async def _exec_local(command: str, timeout: int, ctx: Context | None = None) ->
         exit_code = proc.returncode if proc.returncode is not None else -1
 
         status = "success" if exit_code == 0 else "fail"
+        if exit_code == 127:
+            status = "error"
 
         if ctx is not None:
             await ctx.info(f"Local exec: exit_code={exit_code}, status={status}")

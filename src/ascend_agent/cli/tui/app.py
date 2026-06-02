@@ -19,17 +19,32 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import json
 import signal
+import shlex
 import sys
 import time
+from collections import defaultdict
+from pathlib import Path
 from typing import Callable, Optional
 
 from prompt_toolkit import Application
 from prompt_toolkit.application.current import get_app
 from prompt_toolkit.buffer import Buffer
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.filters import Condition
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
-from prompt_toolkit.layout import Layout, HSplit, VSplit, Window, Dimension
+from prompt_toolkit.layout import (
+    Layout,
+    HSplit,
+    VSplit,
+    Window,
+    Dimension,
+    FloatContainer,
+    Float,
+)
+from prompt_toolkit.layout.menus import CompletionsMenu
 from prompt_toolkit.layout.controls import FormattedTextControl, BufferControl
 from prompt_toolkit.layout.processors import BeforeInput
 from prompt_toolkit.formatted_text import FormattedText
@@ -45,6 +60,90 @@ from ascend_agent.cli.tui.utils.terminal import (
     enter_alternate_screen,
     exit_alternate_screen,
 )
+from ascend_agent.diagnosis.models import (
+    DiagnosisOutput,
+    DiagnosisResult,
+    FixGenerationResult,
+    ReproductionResult,
+    VerificationResult,
+)
+
+
+SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("/models", "Open model selector"),
+    ("/models list", "List model IDs"),
+    ("/models status", "Show active model and credential hints"),
+    ("/models use ", "Select a model by provider/model"),
+    ("/diagnose ", "Diagnose a repo: /diagnose <repo> --trace-text '...'"),
+    ("/fix", "Generate fixes from the last diagnosis"),
+    ("/fix apply", "Apply generated fixes"),
+    ("/reproduce", "Reproduce the last diagnosis"),
+    ("/verify", "Verify the last reproduction"),
+    ("/chat ", "Send a chat message"),
+    ("/reset-chat", "Clear chat history"),
+    ("/help", "Show command help"),
+    ("/quit", "Exit the session"),
+)
+
+
+class SlashCommandCompleter(Completer):
+    """Claude-style slash command completions for the TUI input buffer."""
+
+    def get_completions(self, document, complete_event):
+        text = document.text_before_cursor
+        if not text.startswith("/"):
+            return
+
+        if " " not in text:
+            for command, description in SLASH_COMMANDS:
+                if " " in command.strip():
+                    continue
+                if command.startswith(text):
+                    yield Completion(
+                        command + (" " if command not in ("/help", "/quit", "/reset-chat") else ""),
+                        start_position=-len(text),
+                        display=command,
+                        display_meta=description,
+                    )
+            return
+
+        if text.startswith("/models use "):
+            prefix = text.removeprefix("/models use ")
+            for model_id in _available_model_ids():
+                if model_id.startswith(prefix):
+                    yield Completion(
+                        model_id,
+                        start_position=-len(prefix),
+                        display=model_id,
+                        display_meta="Select model",
+                    )
+            return
+
+        first, remainder = text.split(" ", 1)
+        prefix = f"{first} {remainder}"
+        for command, description in SLASH_COMMANDS:
+            if command.startswith(prefix):
+                yield Completion(
+                    command,
+                    start_position=-len(prefix),
+                    display=command,
+                    display_meta=description,
+                )
+
+
+def _available_model_ids() -> list[str]:
+    try:
+        from ascend_agent.cli.config_manager import ConfigManager
+        from ascend_agent.cli.model_catalog import PROVIDER_PRESETS, full_model_id
+
+        result = []
+        for provider in ConfigManager().list_providers():
+            preset = PROVIDER_PRESETS.get(provider.name)
+            models = list(preset.models) if preset else [provider.default_model]
+            result.extend(full_model_id(provider.name, model) for model in models)
+        return result
+    except Exception:
+        return []
 
 
 # ---- Style Definition ----
@@ -111,6 +210,13 @@ class AscendTUI:
         self._max_messages = max_messages
         self._running = False
         self._interrupted = False
+        self._model_picker_active = False
+        self._model_choices: list[tuple[str, str, bool]] = []
+        self._model_picker_index = 0
+        self._last_diagnosis: DiagnosisOutput | None = None
+        self._last_fixes: FixGenerationResult | None = None
+        self._last_reproduction: ReproductionResult | None = None
+        self._last_verification: VerificationResult | None = None
 
         # --- Hooks / Managers ---
         self._history = CommandHistory(history_file=history_file)
@@ -251,6 +357,8 @@ class AscendTUI:
 
         # --- Input Buffer ---
         self._input_buffer = Buffer(
+            completer=SlashCommandCompleter(),
+            complete_while_typing=False,
             multiline=True,
             accept_handler=self._handle_input_accept,
             name="ascend_input",
@@ -258,6 +366,8 @@ class AscendTUI:
 
         # --- Content Text ---
         def get_content_text():
+            if self._model_picker_active:
+                return FormattedText(self._render_model_picker())
             if not self._messages:
                 return FormattedText([
                     ("class:content", ""),
@@ -265,7 +375,7 @@ class AscendTUI:
                     ("fg:#839496", "Welcome to Ascend Agent TUI.\n"),
                     ("fg:#657b83 dim", ""),
                     ("fg:#657b83 dim", "Type a message or /help for commands.\n"),
-                    ("fg:#657b83 dim", "Ctrl+C interrupt  Ctrl+D quit  /help for more.\n"),
+                    ("fg:#657b83 dim", "Enter send  Ctrl+J newline  Ctrl+C interrupt  Ctrl+D quit.\n"),
                     ("", ""),
                 ])
             return format_messages(self._messages)
@@ -306,6 +416,17 @@ class AscendTUI:
             input_window,
         ])
 
+        root_container = FloatContainer(
+            content=root_container,
+            floats=[
+                Float(
+                    xcursor=True,
+                    ycursor=True,
+                    content=CompletionsMenu(max_height=8, scroll_offset=1),
+                )
+            ],
+        )
+
         # --- Key Bindings ---
         kb = self._build_keybindings()
 
@@ -326,45 +447,94 @@ class AscendTUI:
         @kb.add(Keys.ControlC)
         def _interrupt(event):
             """Ctrl+C: interrupt current operation, don't exit."""
+            if self._model_picker_active:
+                self._model_picker_active = False
+                self._invalidate()
+                return
             self._interrupted = True
             if self._streaming_manager:
                 self._streaming_manager.request_interrupt()
+
+        @kb.add("enter", eager=True)
+        def _enter(event):
+            """Enter: select completion/model item or submit input."""
+            if self._model_picker_active:
+                self._select_highlighted_model()
+                return
+            complete_state = self._input_buffer.complete_state
+            if complete_state and complete_state.current_completion:
+                self._input_buffer.apply_completion(complete_state.current_completion)
+                return
+            self._input_buffer.validate_and_handle()
 
         @kb.add(Keys.ControlD)
         def _quit(event):
             """Ctrl+D: quit the application."""
             event.app.exit()
 
+        @kb.add("c-j")
+        def _insert_newline(event):
+            """Ctrl+J: insert a newline without submitting."""
+            self._input_buffer.insert_text("\n")
+
         @kb.add(Keys.ControlL)
         def _clear_screen(event):
             """Ctrl+L: clear messages."""
             self.clear_messages()
 
+        @kb.add("/", eager=True)
+        def _slash(event):
+            """Slash: insert and open the command completion menu."""
+            self._input_buffer.insert_text("/")
+            self._input_buffer.start_completion(select_first=True)
+
         @kb.add(Keys.Escape, eager=True)
         def _cancel(event):
             """Escape: cancel current operation."""
+            if self._model_picker_active:
+                self._model_picker_active = False
+                self._invalidate()
+                return
+            if self._input_buffer.complete_state:
+                self._input_buffer.cancel_completion()
+                return
             self._interrupted = True
             if self._streaming_manager:
                 self._streaming_manager.request_interrupt()
 
-        @kb.add(Keys.Up, eager=True)
+        @kb.add("up", eager=True)
         def _history_up(event):
-            """Up arrow: navigate command history backward."""
-            if self._history:
-                current = self._input_buffer.text
-                result = self._history.navigate_up(current)
-                if result is not None:
-                    self._input_buffer.text = result
-                    self._input_buffer.cursor_position = len(result)
+            """Up arrow: completion menu first, otherwise history/model picker."""
+            if self._model_picker_active:
+                self._model_picker_index = max(0, self._model_picker_index - 1)
+                self._invalidate()
+                return
+            if self._slash_completion_active():
+                self._input_buffer.complete_previous()
+                return
+            current = self._input_buffer.text
+            result = self._history.navigate_up(current)
+            if result is not None:
+                self._input_buffer.text = result
+                self._input_buffer.cursor_position = len(result)
 
-        @kb.add(Keys.Down, eager=True)
+        @kb.add("down", eager=True)
         def _history_down(event):
-            """Down arrow: navigate command history forward."""
-            if self._history:
-                result = self._history.navigate_down()
-                if result is not None:
-                    self._input_buffer.text = result
-                    self._input_buffer.cursor_position = len(result)
+            """Down arrow: completion menu first, otherwise history/model picker."""
+            if self._model_picker_active:
+                self._model_picker_index = min(
+                    len(self._model_choices) - 1,
+                    self._model_picker_index + 1,
+                )
+                self._invalidate()
+                return
+            if self._slash_completion_active():
+                self._input_buffer.complete_next()
+                return
+            result = self._history.navigate_down()
+            if result is not None:
+                self._input_buffer.text = result
+                self._input_buffer.cursor_position = len(result)
 
         return kb
 
@@ -383,8 +553,7 @@ class AscendTUI:
             return False  # Clear empty input
 
         # Add to history
-        if self._history:
-            self._history.add(text)
+        self._history.add(text)
 
         # Handle slash commands
         if text.startswith("/"):
@@ -397,7 +566,11 @@ class AscendTUI:
 
     def _handle_slash_command(self, text: str) -> None:
         """Process slash commands like /quit, /help, /models, etc."""
-        parts = text.split()
+        try:
+            parts = shlex.split(text)
+        except ValueError as exc:
+            self.add_message(Message(role="system", content=f"Command parse error: {exc}"))
+            return
         cmd = parts[0].lstrip("/").lower()
         args = parts[1:]
 
@@ -408,15 +581,22 @@ class AscendTUI:
 
         elif cmd == "help":
             help_text = (
-                "[bold]Available Commands[/bold]\n\n"
-                "  [bold]/models[/bold]          Show current model and available model IDs\n"
-                "  [bold]/models use <id>[/bold] Select a model\n"
-                "  [bold]/chat <message>[/bold]  Chat with the active LLM provider\n"
-                "  [bold]/reset-chat[/bold]      Clear chat history\n"
-                "  [bold]/help[/bold]            Show this help\n"
-                "  [bold]/quit[/bold]            Exit the session\n"
-                "  [bold]/exit[/bold]            Same as /quit\n\n"
-                "[dim]Keyboard shortcuts:[/dim]\n"
+                "Available Commands\n\n"
+                "  /models                    Open model selector\n"
+                "  /models list|status        Show model information\n"
+                "  /models use <provider/model>\n"
+                "  /diagnose <repo> [--trace file | --trace-text 'text'] [--output file]\n"
+                "  /fix [diagnosis.json] [--output file]\n"
+                "  /fix apply [--output file]\n"
+                "  /reproduce [diagnosis.json] [--output file]\n"
+                "  /verify [reproduction.json] [--output file]\n"
+                "  /chat <message>            Chat with the active LLM provider\n"
+                "  /reset-chat                Clear chat history\n"
+                "  /help                      Show this help\n"
+                "  /quit                      Exit the session\n\n"
+                "Keyboard shortcuts:\n"
+                "  Enter   Send message or command\n"
+                "  Ctrl+J  Insert newline in the input\n"
                 "  Ctrl+C  Interrupt current operation\n"
                 "  Ctrl+D  Quit application\n"
                 "  Ctrl+L  Clear screen\n"
@@ -430,11 +610,26 @@ class AscendTUI:
             self.add_message(Message(role="system", content=" Chat history cleared."))
 
         elif cmd == "models":
-            self.add_message(Message(
-                role="system",
-                content="[bold]Active model:[/bold] " + (self._model or "unknown") +
-                        "\nUse [bold]/models use <id>[/bold] to switch models."
-            ))
+            self._handle_models_command(args)
+
+        elif cmd == "diagnose":
+            self._run_diagnose_command(args)
+
+        elif cmd == "fix":
+            self._run_fix_command(args)
+
+        elif cmd == "reproduce":
+            self._run_reproduce_command(args)
+
+        elif cmd == "verify":
+            self._run_verify_command(args)
+
+        elif cmd == "chat":
+            message = " ".join(args).strip()
+            if not message:
+                self.add_message(Message(role="system", content="Usage: /chat <message>"))
+            else:
+                self._handle_text_input(message)
 
         else:
             self.add_message(Message(
@@ -492,6 +687,430 @@ class AscendTUI:
         self._on_user_input_callback = callback
 
     _on_user_input_callback: Optional[Callable] = None
+
+    # ==================================================================
+    # Slash Command Implementations
+    # ==================================================================
+
+    def _slash_completion_active(self) -> bool:
+        """Return true only when the slash completion menu should own arrows."""
+        return bool(
+            self._input_buffer.complete_state
+            and self._input_buffer.text.startswith("/")
+        )
+
+    def _parse_args(self, args: list[str]) -> dict[str, str | bool | list[str]]:
+        parsed: dict[str, str | bool | list[str]] = {"_": []}
+        positionals: list[str] = []
+        i = 0
+        while i < len(args):
+            token = args[i]
+            if token.startswith("--"):
+                key = token[2:].replace("-", "_")
+                if i + 1 < len(args) and not args[i + 1].startswith("--"):
+                    parsed[key] = args[i + 1]
+                    i += 2
+                else:
+                    parsed[key] = True
+                    i += 1
+            else:
+                positionals.append(token)
+                i += 1
+        parsed["_"] = positionals
+        return parsed
+
+    def _run_with_status(self, label: str, func: Callable[[], None]) -> None:
+        self.add_message(Message(role="system", content=label))
+        self.set_status(streaming=True)
+        try:
+            func()
+        except Exception as exc:
+            self.add_message(Message(role="system", content=f"Error: {exc}"))
+        finally:
+            self.set_status(streaming=False)
+
+    def _active_provider(self) -> str:
+        if self._provider:
+            return self._provider
+        try:
+            from ascend_agent.cli.config_manager import ConfigManager
+            return ConfigManager().get_active()
+        except Exception:
+            return "openai"
+
+    def _handle_models_command(self, args: list[str]) -> None:
+        from ascend_agent.cli.config_manager import ConfigManager
+        from ascend_agent.cli.model_catalog import PROVIDER_PRESETS, full_model_id
+        from ascend_agent.cli.models import use_model
+
+        cm = ConfigManager()
+        action = args[0] if args else ""
+        if action in ("use", "select") and len(args) >= 2:
+            try:
+                selected = use_model(cm, args[1])
+            except ValueError as exc:
+                self.add_message(Message(role="system", content=f"Model error: {exc}"))
+                return
+            provider, _ = selected.split("/", 1)
+            self._provider = provider
+            self._model = selected
+            self.set_status(provider=provider, model=selected)
+            self.add_message(Message(role="system", content=f"Model selected: {selected}"))
+            return
+
+        if action == "status":
+            self.add_message(Message(role="system", content=self._format_model_status(cm)))
+            return
+
+        if action in ("list", "ls", "show"):
+            self.add_message(Message(role="system", content=self._format_model_list(cm)))
+            return
+
+        choices: list[tuple[str, str, bool]] = []
+        active = cm.get_active_model()
+        for provider in cm.list_providers():
+            preset = PROVIDER_PRESETS.get(provider.name)
+            models = list(preset.models) if preset else [provider.default_model]
+            for model in models:
+                model_id = full_model_id(provider.name, model)
+                choices.append((model_id, provider.name, model_id == active))
+        self._model_choices = choices
+        self._model_picker_index = max(
+            0,
+            next((i for i, (model_id, _, _) in enumerate(choices) if model_id == active), 0),
+        )
+        self._model_picker_active = True
+        self._invalidate()
+
+    def _format_model_list(self, cm) -> str:
+        from ascend_agent.cli.model_catalog import PROVIDER_PRESETS, full_model_id
+        from ascend_agent.cli.models import _is_configured
+
+        active = cm.get_active_model()
+        lines = [f"Current model: {active}", "", "Available models:"]
+        for provider in cm.list_providers():
+            preset = PROVIDER_PRESETS.get(provider.name)
+            models = list(preset.models) if preset else [provider.default_model]
+            status = "configured" if _is_configured(provider) else "needs key"
+            lines.append(f"{provider.name} ({status})")
+            for model in models:
+                model_id = full_model_id(provider.name, model)
+                marker = "*" if model_id == active else " "
+                lines.append(f"  {marker} {model_id}")
+        lines.append("")
+        lines.append("Use /models to open the selector or /models use <provider/model>.")
+        return "\n".join(lines)
+
+    def _format_model_status(self, cm) -> str:
+        from ascend_agent.cli.config_manager import CONFIG_FILE
+        from ascend_agent.cli.model_catalog import split_model_id
+        from ascend_agent.cli.models import _is_configured
+
+        active = cm.get_active_model()
+        provider_name, _ = split_model_id(active)
+        provider = cm.get_provider(provider_name)
+        configured = _is_configured(provider) if provider else False
+        env_name = f"ASCEND_{provider_name.upper()}_API_KEY"
+        if provider_name == "openai":
+            env_name += " or OPENAI_API_KEY"
+        return "\n".join([
+            f"model: {active}",
+            f"provider: {provider_name}",
+            f"configured: {'yes' if configured else 'no'}",
+            f"config: {CONFIG_FILE}",
+            f"env: {env_name}",
+        ])
+
+    def _render_model_picker(self) -> list[tuple[str, str]]:
+        lines: list[tuple[str, str]] = [
+            ("bold fg:cyan", " Select Model\n"),
+            ("fg:#657b83", " Use Up/Down to navigate, Enter to select, Esc to cancel.\n\n"),
+        ]
+        for i, (model_id, provider, active) in enumerate(self._model_choices):
+            selected = i == self._model_picker_index
+            prefix = ">" if selected else " "
+            active_marker = " *" if active else ""
+            style = "bold fg:#b58900" if selected else ("fg:green" if active else "fg:#839496")
+            lines.append((style, f" {prefix} {model_id}{active_marker}\n"))
+        return lines
+
+    def _select_highlighted_model(self) -> None:
+        if not self._model_choices:
+            self._model_picker_active = False
+            self._invalidate()
+            return
+        model_id, provider, _ = self._model_choices[self._model_picker_index]
+        try:
+            from ascend_agent.cli.config_manager import ConfigManager
+            from ascend_agent.cli.models import use_model
+
+            selected = use_model(ConfigManager(), model_id)
+        except ValueError as exc:
+            self.add_message(Message(role="system", content=f"Model error: {exc}"))
+            self._model_picker_active = False
+            self._invalidate()
+            return
+        self._provider = provider
+        self._model = selected
+        self._model_picker_active = False
+        self.set_status(provider=provider, model=selected)
+        self.add_message(Message(role="system", content=f"Model selected: {selected}"))
+
+    def _run_diagnose_command(self, args: list[str]) -> None:
+        parsed = self._parse_args(args)
+        positionals = parsed["_"]
+        if not isinstance(positionals, list) or not positionals:
+            self.add_message(Message(
+                role="system",
+                content="Usage: /diagnose <repo> [--trace file | --trace-text 'text'] [--output file]",
+            ))
+            return
+
+        def work() -> None:
+            from ascend_agent.config import settings
+            from ascend_agent.context.models import ConfigEnv, ContextDocument
+            from ascend_agent.context.repo import RepoScanner
+            from ascend_agent.context.trace import trace_from_file, trace_from_text
+            from ascend_agent.diagnosis.engine import Engine
+            from ascend_agent.diagnosis.router import create_router
+            from ascend_agent.diagnosis.tool_client import create_tool_client
+
+            repo = str(positionals[0])
+            trace_text = parsed.get("trace_text")
+            trace_path = parsed.get("trace")
+            if not trace_text and not trace_path and len(positionals) > 1:
+                trace_text = " ".join(str(item) for item in positionals[1:])
+            repo_info = RepoScanner().scan(repo)
+            trace_info = None
+            if isinstance(trace_path, str):
+                trace_info = trace_from_file(trace_path)
+            elif isinstance(trace_text, str):
+                trace_info = trace_from_text(trace_text)
+            doc = ContextDocument(
+                repo=repo_info,
+                trace=trace_info,
+                config_env=ConfigEnv(
+                    python_version=settings.python_version,
+                    platform=settings.platform,
+                    env_vars=settings.env_vars,
+                ),
+            )
+            router = create_router(provider=self._active_provider())
+            tool_client = create_tool_client()
+            result = Engine(router=router, repo_path=repo, search_tool=tool_client.search_code).diagnose(doc)
+            output = DiagnosisOutput(context_doc=doc, diagnosis_result=result)
+            self._last_diagnosis = output
+            output_path = parsed.get("output")
+            saved = ""
+            if isinstance(output_path, str):
+                Path(output_path).write_text(output.model_dump_json(indent=2))
+                saved = f"\nSaved diagnosis JSON: {output_path}"
+            self.add_message(Message(role="assistant", content=self._format_diagnosis(result) + saved))
+
+        self._run_with_status("Running diagnosis...", work)
+
+    def _format_diagnosis(self, result: DiagnosisResult) -> str:
+        lines = ["Diagnosis Results", f"Search iterations used: {result.iterations_used}/3"]
+        if result.errors:
+            lines.append("")
+            lines.append("Partial failures:")
+            for error in result.errors:
+                lines.append(f"- {error.stage}: {error.reason}")
+        if not result.hypotheses:
+            lines.append("")
+            lines.append("No hypotheses could be generated.")
+            return "\n".join(lines)
+        for i, hyp in enumerate(result.hypotheses, 1):
+            lines.append("")
+            lines.append(f"Hypothesis #{i} ({hyp.confidence:.0%})")
+            lines.append(hyp.root_cause)
+            for ev in hyp.evidence:
+                lines.append(f"- {ev.file_path}:{ev.line_number} {ev.relevance}")
+        return "\n".join(lines)
+
+    def _load_diagnosis(self, path: str | None) -> DiagnosisOutput:
+        if path:
+            return DiagnosisOutput.model_validate_json(Path(path).read_text())
+        if self._last_diagnosis is None:
+            raise ValueError("No diagnosis available. Run /diagnose first or pass a diagnosis JSON path.")
+        return self._last_diagnosis
+
+    def _run_fix_command(self, args: list[str]) -> None:
+        parsed = self._parse_args(args)
+        positionals = parsed["_"]
+        if isinstance(positionals, list) and positionals and positionals[0] == "apply":
+            self._apply_last_fixes(parsed.get("output") if isinstance(parsed.get("output"), str) else None)
+            return
+        diagnosis_path = positionals[0] if isinstance(positionals, list) and positionals else None
+
+        def work() -> None:
+            from ascend_agent.diagnosis.fix_engine import FixEngine
+            from ascend_agent.diagnosis.router import create_router
+
+            diagnosis = self._load_diagnosis(str(diagnosis_path) if diagnosis_path else None)
+            repo_path = diagnosis.context_doc.repo.path
+            router = create_router(provider=self._active_provider())
+            result = FixEngine(router=router, repo_path=repo_path).generate_fixes(diagnosis.diagnosis_result)
+            self._last_fixes = result
+            output_path = parsed.get("output")
+            saved = ""
+            if isinstance(output_path, str):
+                Path(output_path).write_text(result.model_dump_json(indent=2))
+                saved = f"\nSaved fix suggestions JSON: {output_path}"
+            self.add_message(Message(role="assistant", content=self._format_fixes(result) + saved))
+
+        self._run_with_status("Generating fix suggestions...", work)
+
+    def _format_fixes(self, result: FixGenerationResult) -> str:
+        lines = [
+            "Fix Generation Complete",
+            f"Generated {len(result.suggestions)} suggestions for {result.total_hypotheses} hypotheses",
+        ]
+        if result.errors:
+            lines.append("")
+            lines.append("Partial failures:")
+            for error in result.errors:
+                lines.append(f"- {error.stage}: {error.reason}")
+        for i, suggestion in enumerate(result.suggestions, 1):
+            lines.append("")
+            lines.append(f"Fix #{i}: {suggestion.file_path}")
+            lines.append(suggestion.explanation)
+            lines.append(suggestion.diff_patch)
+        if result.suggestions:
+            lines.append("")
+            lines.append("Use /fix apply to apply all generated suggestions.")
+        return "\n".join(lines)
+
+    def _apply_last_fixes(self, output_path: str | None = None) -> None:
+        if self._last_fixes is None or not self._last_fixes.suggestions:
+            self.add_message(Message(role="system", content="No generated fixes available. Run /fix first."))
+            return
+        if self._last_diagnosis is None:
+            self.add_message(Message(role="system", content="No diagnosis context available for repo path."))
+            return
+
+        def work() -> None:
+            from ascend_agent.tools.file_edit import edit_file
+
+            repo_path = self._last_diagnosis.context_doc.repo.path
+            by_file: dict[str, list[dict]] = defaultdict(list)
+            for suggestion in self._last_fixes.suggestions:
+                for replacement in suggestion.replacements:
+                    by_file[suggestion.file_path].append(
+                        {"old_text": replacement.old_text, "new_text": replacement.new_text}
+                    )
+            applied = 0
+            failed: list[str] = []
+            for file_path, ops in by_file.items():
+                result = asyncio.run(edit_file(str(Path(repo_path) / file_path), ops, repo_path=repo_path))
+                data = json.loads(result)
+                if data.get("status") == "ok":
+                    applied += 1
+                else:
+                    failed.append(f"{file_path}: {data.get('error', 'unknown error')}")
+            if output_path:
+                Path(output_path).write_text(self._last_fixes.model_dump_json(indent=2))
+            lines = [f"Applied fixes to {applied} file(s)."]
+            if failed:
+                lines.append("Failed:")
+                lines.extend(f"- {item}" for item in failed)
+            if output_path:
+                lines.append(f"Saved applied fix suggestions JSON: {output_path}")
+            self.add_message(Message(role="assistant", content="\n".join(lines)))
+
+        self._run_with_status("Applying generated fixes...", work)
+
+    def _run_reproduce_command(self, args: list[str]) -> None:
+        parsed = self._parse_args(args)
+        positionals = parsed["_"]
+        diagnosis_path = positionals[0] if isinstance(positionals, list) and positionals else None
+
+        def work() -> None:
+            from ascend_agent.config import settings
+            from ascend_agent.diagnosis.router import create_router
+            from ascend_agent.reproduction.engine import ReproductionEngine
+
+            diagnosis = self._load_diagnosis(str(diagnosis_path) if diagnosis_path else None)
+            repo_path = diagnosis.context_doc.repo.path
+            router = create_router(provider=self._active_provider())
+            result = asyncio.run(
+                ReproductionEngine(router=router, repo_path=repo_path, settings=settings).reproduce(
+                    diagnosis.diagnosis_result
+                )
+            )
+            result.repo_path = repo_path
+            self._last_reproduction = result
+            output_path = parsed.get("output")
+            saved = ""
+            if isinstance(output_path, str):
+                Path(output_path).write_text(result.model_dump_json(indent=2))
+                saved = f"\nSaved reproduction JSON: {output_path}"
+            self.add_message(Message(role="assistant", content=self._format_reproduction(result) + saved))
+
+        self._run_with_status("Running reproduction...", work)
+
+    def _format_reproduction(self, result: ReproductionResult) -> str:
+        lines = [
+            "Reproduction Result",
+            f"Status: {result.status}",
+            f"Command: {result.command}",
+            f"Exit code: {result.exit_code}",
+            f"Duration: {result.duration_seconds:.2f}s",
+            f"Hypothesis tested: {result.hypothesis_id_tested}",
+        ]
+        if result.stdout:
+            lines.append(f"\nstdout:\n{result.stdout}")
+        if result.stderr:
+            lines.append(f"\nstderr:\n{result.stderr}")
+        return "\n".join(lines)
+
+    def _run_verify_command(self, args: list[str]) -> None:
+        parsed = self._parse_args(args)
+        positionals = parsed["_"]
+        reproduction_path = positionals[0] if isinstance(positionals, list) and positionals else None
+
+        def work() -> None:
+            from ascend_agent.config import settings
+            from ascend_agent.diagnosis.router import create_router
+            from ascend_agent.verification.engine import VerificationEngine
+
+            if reproduction_path:
+                reproduction = ReproductionResult.model_validate_json(Path(str(reproduction_path)).read_text())
+            elif self._last_reproduction is not None:
+                reproduction = self._last_reproduction
+            else:
+                raise ValueError("No reproduction available. Run /reproduce first or pass a reproduction JSON path.")
+            repo_path = reproduction.repo_path or settings.repo_path or "."
+            router = create_router(provider=self._active_provider())
+            result = asyncio.run(
+                VerificationEngine(router=router, repo_path=repo_path, settings=settings).verify(reproduction)
+            )
+            self._last_verification = result
+            output_path = parsed.get("output")
+            saved = ""
+            if isinstance(output_path, str):
+                Path(output_path).write_text(result.model_dump_json(indent=2))
+                saved = f"\nSaved verification JSON: {output_path}"
+            self.add_message(Message(role="assistant", content=self._format_verification(result) + saved))
+
+        self._run_with_status("Running verification...", work)
+
+    def _format_verification(self, result: VerificationResult) -> str:
+        lines = [
+            "Verification Result",
+            f"Status: {result.status}",
+            f"Framework: {result.framework or 'none detected'}",
+            f"Command: {result.command}",
+            f"Tests found: {result.tests_found} | Tests run: {result.tests_run}",
+            f"Passed: {result.passed} | Failed: {result.failed} | Errors: {result.errors}",
+            f"Duration: {result.duration_seconds:.2f}s",
+            f"Summary: {result.summary}",
+        ]
+        if result.files_tested:
+            lines.append("")
+            lines.append("Test files executed:")
+            lines.extend(f"- {path}" for path in result.files_tested)
+        return "\n".join(lines)
 
 
 # ==================================================================
