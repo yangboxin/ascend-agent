@@ -417,6 +417,40 @@ class ModelRouter:
             return ""
         return content
 
+    def chat_stream(
+        self,
+        messages: list[dict],
+        max_tokens: int = 4096,
+        temperature: float = 0.2,
+    ):
+        """Send a streaming chat request to the active provider.
+
+        Yields text chunks as they arrive from the API. Use for
+        typewriter-effect display in the TUI.
+
+        Args:
+            messages: Chat messages in OpenAI format.
+            max_tokens: Maximum tokens in the response.
+            temperature: Sampling temperature.
+
+        Yields:
+            str chunks of the assistant response.
+        """
+        try:
+            stream = self._client.chat.completions.create(
+                model=self._model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stream=True,
+            )
+            for chunk in stream:
+                delta = chunk.choices[0].delta if chunk.choices else None
+                if delta and delta.content:
+                    yield delta.content
+        except APIConnectionError as e:
+            raise RuntimeError(_format_connection_error(e, self._base_url, self._model)) from e
+
     def __repr__(self) -> str:
         return f"ModelRouter(model={self._model!r})"
 

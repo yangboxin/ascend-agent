@@ -1,0 +1,33 @@
+{
+  "name": "asd-tui",
+  "version": "0.1.0",
+  "description": "Ascend Standard Diagnostic — immersive Claude Code-style terminal interface",
+  "type": "module",
+  "bin": {
+    "asd": "./dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx src/index.tsx",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "chalk": "^5.4.1",
+    "cli-highlight": "^2.1.11",
+    "commander": "^13.1.0",
+    "ink": "^5.2.0",
+    "ink-spinner": "^5.0.0",
+    "ink-text-input": "^6.0.0",
+    "marked": "^15.0.12",
+    "react": "^18.3.1",
+    "ws": "^8.18.2"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/react": "^18.3.18",
+    "tsx": "^4.19.4",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.9"
+  }
+}
