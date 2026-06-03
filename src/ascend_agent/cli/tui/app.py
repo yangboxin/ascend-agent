@@ -19,6 +19,8 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import io
 import json
 import signal
 import shlex
@@ -221,6 +223,7 @@ class AscendTUI:
         self._last_reproduction: ReproductionResult | None = None
         self._last_verification: VerificationResult | None = None
         self._working_message_id: str | None = None
+        self._task_running = False
 
         # --- Hooks / Managers ---
         self._history = CommandHistory(history_file=history_file)
@@ -567,6 +570,7 @@ class AscendTUI:
 
         # Handle slash commands
         if text.startswith("/"):
+            self.add_user_message(text)
             self._handle_slash_command(text)
             return False  # Clear
 
@@ -789,14 +793,40 @@ class AscendTUI:
         return parsed
 
     def _run_with_status(self, label: str, func: Callable[[], None]) -> None:
+        if self._task_running:
+            self.add_message(Message(
+                role="system",
+                content="Another command is already running. Press Ctrl+C to request interrupt.",
+            ))
+            return
+
+        self._task_running = True
         self.add_message(Message(role="system", content=label))
         self.set_status(streaming=True)
-        try:
-            func()
-        except Exception as exc:
-            self.add_message(Message(role="system", content=f"Error: {exc}"))
-        finally:
-            self.set_status(streaming=False)
+
+        def run_task() -> None:
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                    func()
+            except Exception as exc:
+                self.add_message(Message(role="system", content=f"Error: {exc}"))
+            finally:
+                captured = "\n".join(
+                    item.strip()
+                    for item in (stdout.getvalue(), stderr.getvalue())
+                    if item.strip()
+                )
+                if captured:
+                    if len(captured) > 4000:
+                        captured = captured[-4000:]
+                        captured = "[truncated]\n" + captured
+                    self.add_message(Message(role="system", content=f"Command output:\n{captured}"))
+                self._task_running = False
+                self.set_status(streaming=False)
+
+        threading.Thread(target=run_task, daemon=True).start()
 
     def _active_provider(self) -> str:
         if self._provider:

@@ -526,6 +526,47 @@ class TestTUIAppConstruction:
 
         assert tui.messages == []
 
+    def test_slash_input_is_echoed_before_command_runs(self):
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        tui = AscendTUI(provider="test", model="test-model")
+        tui._build_app()
+        tui._input_buffer.text = "/help"
+
+        tui._handle_input_accept(tui._input_buffer)
+
+        assert tui.messages[0].content == "/help"
+
+    def test_run_with_status_runs_in_background_and_captures_output(self):
+        import threading
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        entered = threading.Event()
+        release = threading.Event()
+
+        def work():
+            entered.set()
+            print("internal log")
+            release.wait(timeout=1)
+
+        tui = AscendTUI(provider="test", model="test-model")
+        tui._build_app()
+
+        tui._run_with_status("Running test...", work)
+
+        assert tui._task_running is True
+        assert any(message.content == "Running test..." for message in tui.messages)
+        assert entered.wait(timeout=1)
+        release.set()
+        for _ in range(100):
+            if not tui._task_running:
+                break
+            import time
+            time.sleep(0.01)
+
+        assert tui._task_running is False
+        assert any("internal log" in message.content for message in tui.messages)
+
     def test_text_input_runs_callback_in_background_and_shows_working(self):
         import threading
         from ascend_agent.cli.tui.app import AscendTUI
