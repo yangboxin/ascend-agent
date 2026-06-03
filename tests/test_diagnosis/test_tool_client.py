@@ -52,6 +52,30 @@ async def test_fallback_tool_client_uses_fallback_on_primary_error():
     assert result == "fallback:foo:/repo"
 
 
+@pytest.mark.asyncio
+async def test_fallback_tool_client_reports_primary_error_to_errlog():
+    class BrokenClient:
+        async def search_code(self, pattern: str, path: str) -> str:
+            raise RuntimeError("mcp unavailable")
+
+    class OkClient:
+        async def search_code(self, pattern: str, path: str) -> str:
+            return "fallback result"
+
+    errlog = io.StringIO()
+    client = FallbackToolClient(
+        primary=BrokenClient(),
+        fallback=OkClient(),
+        errlog=errlog,
+    )
+
+    result = await client.search_code("foo", "/repo")
+
+    assert result == "fallback result"
+    assert "MCP search failed" in errlog.getvalue()
+    assert "mcp unavailable" in errlog.getvalue()
+
+
 def test_create_tool_client_local_backend():
     settings = Settings(
         diagnosis_tool_backend="local",
@@ -117,3 +141,27 @@ def test_mcp_tool_client_passes_errlog(monkeypatch):
     asyncio.run(client.search_code("x", "."))
 
     assert captured["errlog"] is errlog
+
+
+def test_create_tool_client_resolves_default_python_to_current_executable(monkeypatch):
+    captured = {}
+
+    class FakeMCPToolClient:
+        def __init__(self, command, args=None, errlog=None):
+            captured["command"] = command
+            captured["args"] = args
+
+        async def search_code(self, pattern: str, path: str) -> str:
+            return "ok"
+
+    monkeypatch.setattr("ascend_agent.diagnosis.tool_client.MCPToolClient", FakeMCPToolClient)
+    settings = Settings(
+        diagnosis_tool_backend="auto",
+        mcp_server_command="python -m ascend_agent.tools.server",
+    )
+
+    client = create_tool_client(settings=settings)
+
+    assert isinstance(client, FallbackToolClient)
+    assert captured["command"] == sys.executable
+    assert captured["args"] == ["-m", "ascend_agent.tools.server"]

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import sys
 import shlex
+import sys
 from collections.abc import Sequence
 from typing import Any, Protocol, TextIO
 
@@ -76,14 +76,25 @@ class MCPToolClient:
 class FallbackToolClient:
     """Try primary tool client first, then fallback client on failure."""
 
-    def __init__(self, primary: DiagnosisToolClient, fallback: DiagnosisToolClient):
+    def __init__(
+        self,
+        primary: DiagnosisToolClient,
+        fallback: DiagnosisToolClient,
+        errlog: TextIO | None = None,
+    ):
         self._primary = primary
         self._fallback = fallback
+        self._errlog = errlog
 
     async def search_code(self, pattern: str, path: str) -> str:
         try:
             return await self._primary.search_code(pattern, path)
-        except Exception:
+        except Exception as exc:
+            if self._errlog is not None:
+                self._errlog.write(
+                    f"MCP search failed for pattern {pattern!r}; "
+                    f"falling back to local search: {exc}\n"
+                )
             return await self._fallback.search_code(pattern, path)
 
 
@@ -109,6 +120,8 @@ def create_tool_client(
         return local_client
 
     command = command_parts[0]
+    if command == "python":
+        command = sys.executable
     args = command_parts[1:]
     mcp_client = MCPToolClient(command=command, args=args, errlog=errlog)
-    return FallbackToolClient(primary=mcp_client, fallback=local_client)
+    return FallbackToolClient(primary=mcp_client, fallback=local_client, errlog=errlog)

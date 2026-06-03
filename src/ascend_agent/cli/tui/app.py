@@ -22,6 +22,7 @@ import asyncio
 import contextlib
 import io
 import json
+import logging
 import signal
 import shlex
 import sys
@@ -64,6 +65,7 @@ from ascend_agent.cli.tui.utils.terminal import (
     enter_alternate_screen,
     exit_alternate_screen,
 )
+from ascend_agent.context.models import ContextDocument
 from ascend_agent.diagnosis.models import (
     DiagnosisOutput,
     DiagnosisResult,
@@ -840,15 +842,34 @@ class AscendTUI:
         def run_task() -> None:
             stdout = io.StringIO()
             stderr = io.StringIO()
+            logs = io.StringIO()
+            log_handler = logging.StreamHandler(logs)
+            log_handler.setLevel(logging.WARNING)
+            log_handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+            root_logger = logging.getLogger()
+            root_logger.addHandler(log_handler)
+            redirected_handlers: list[tuple[logging.StreamHandler, object]] = []
+            for logger_name in ("", "ascend_agent"):
+                logger = logging.getLogger(logger_name)
+                for handler in logger.handlers:
+                    if not isinstance(handler, logging.StreamHandler) or handler is log_handler:
+                        continue
+                    stream = getattr(handler, "stream", None)
+                    if stream in (sys.stderr, sys.__stderr__, sys.stdout, sys.__stdout__):
+                        redirected_handlers.append((handler, stream))
+                        handler.setStream(stderr)
             try:
                 with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
                     func()
             except Exception as exc:
                 self.add_message(Message(role="system", content=f"Error: {exc}"))
             finally:
+                for handler, stream in redirected_handlers:
+                    handler.setStream(stream)
+                root_logger.removeHandler(log_handler)
                 captured = "\n".join(
                     item.strip()
-                    for item in (stdout.getvalue(), stderr.getvalue())
+                    for item in (stdout.getvalue(), stderr.getvalue(), logs.getvalue())
                     if item.strip()
                 )
                 if captured:
@@ -1012,6 +1033,7 @@ class AscendTUI:
             trace_path = parsed.get("trace")
             if not trace_text and not trace_path and len(positionals) > 1:
                 trace_text = " ".join(str(item) for item in positionals[1:])
+            self.add_message(Message(role="system", content="Building context..."))
             repo_info = RepoScanner().scan(repo)
             trace_info = None
             if isinstance(trace_path, str):
@@ -1027,6 +1049,8 @@ class AscendTUI:
                     env_vars=settings.env_vars,
                 ),
             )
+            self.add_message(Message(role="assistant", content=self._format_context(doc)))
+            self.add_message(Message(role="system", content="Running diagnosis..."))
             router = create_router(provider=self._active_provider())
             tool_output = io.StringIO()
             tool_client = create_tool_client(errlog=tool_output)
@@ -1045,6 +1069,61 @@ class AscendTUI:
 
         self._run_with_status("Running diagnosis...", work)
 
+    def _format_context(self, doc: ContextDocument) -> str:
+        lines = ["Context"]
+        if doc.repo:
+            lines.extend(
+                [
+                    "",
+                    "Repository Info",
+                    f"Path: {doc.repo.path}",
+                    f"Language: {doc.repo.language}",
+                    f"Files: {doc.repo.file_count}",
+                ]
+            )
+            structure_preview = ", ".join(doc.repo.structure[:20])
+            if len(doc.repo.structure) > 20:
+                structure_preview += ", ..."
+            if structure_preview:
+                lines.append(f"Structure: {structure_preview}")
+
+        if doc.trace:
+            lines.append("")
+            if doc.trace.error_type:
+                lines.append(f"Error: {doc.trace.error_type}")
+                if doc.trace.error_message:
+                    lines.append(doc.trace.error_message)
+            else:
+                lines.append("Error: not detected")
+                if doc.trace.parse_warnings:
+                    lines.append(", ".join(doc.trace.parse_warnings))
+            if doc.trace.signal_candidates:
+                signals = ", ".join(
+                    f"{candidate.kind}={candidate.value} ({candidate.confidence:.2f})"
+                    for candidate in doc.trace.signal_candidates[:5]
+                )
+                lines.append(f"Uncertain signals: {signals}")
+            if doc.trace.error_events:
+                lines.append("Parsed error events:")
+                for event in doc.trace.error_events[:5]:
+                    lines.append(
+                        f"- {event.kind} line {event.source_line}: "
+                        f"{event.message} ({event.confidence:.2f})"
+                    )
+            if doc.trace.frames:
+                lines.append("Stack Trace:")
+                for i, frame in enumerate(doc.trace.frames[:10], 1):
+                    lines.append(f"- {i}. {frame.file}:{frame.line} in {frame.function}")
+                if len(doc.trace.frames) > 10:
+                    lines.append(f"... {len(doc.trace.frames) - 10} more frames")
+
+        lines.append("")
+        lines.append(
+            f"Environment: Python {doc.config_env.python_version[:6]} "
+            f"on {doc.config_env.platform}"
+        )
+        return "\n".join(lines)
+
     def _format_diagnosis(self, result: DiagnosisResult) -> str:
         lines = ["Diagnosis Results", f"Search iterations used: {result.iterations_used}/3"]
         if result.errors:
@@ -1052,6 +1131,8 @@ class AscendTUI:
             lines.append("Partial failures:")
             for error in result.errors:
                 lines.append(f"- {error.stage}: {error.reason}")
+                if error.details:
+                    lines.append(f"  {error.details}")
         if not result.hypotheses:
             lines.append("")
             lines.append("No hypotheses could be generated.")
@@ -1062,6 +1143,10 @@ class AscendTUI:
             lines.append(hyp.root_cause)
             for ev in hyp.evidence:
                 lines.append(f"- {ev.file_path}:{ev.line_number} {ev.relevance}")
+                if ev.code_snippet:
+                    lines.append("```")
+                    lines.append(ev.code_snippet.rstrip())
+                    lines.append("```")
         return "\n".join(lines)
 
     def _load_diagnosis(self, path: str | None) -> DiagnosisOutput:

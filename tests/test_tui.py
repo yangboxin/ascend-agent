@@ -612,7 +612,7 @@ class TestTUIAppConstruction:
     def test_tui_diagnose_uses_tool_client_with_captured_errlog(self, tmp_path, monkeypatch):
         from unittest.mock import Mock
         from ascend_agent.cli.tui.app import AscendTUI
-        from ascend_agent.diagnosis.models import DiagnosisResult
+        from ascend_agent.diagnosis.models import DiagnosisResult, Evidence, Hypothesis
 
         trace_path = tmp_path / "error.log"
         trace_path.write_text("ValueError: boom")
@@ -625,7 +625,24 @@ class TestTUIAppConstruction:
                 self.search_tool = search_tool
 
             def diagnose(self, doc):
-                return DiagnosisResult(hypotheses=[], errors=[], iterations_used=0)
+                return DiagnosisResult(
+                    hypotheses=[
+                        Hypothesis(
+                            root_cause="boom is raised from app.py",
+                            evidence=[
+                                Evidence(
+                                    file_path="app.py",
+                                    line_number=1,
+                                    code_snippet="raise ValueError('boom')",
+                                    relevance="matches the parsed error",
+                                )
+                            ],
+                            confidence=0.9,
+                        )
+                    ],
+                    errors=[],
+                    iterations_used=0,
+                )
 
         monkeypatch.setattr("ascend_agent.diagnosis.router.create_router", lambda provider: Mock())
         monkeypatch.setattr("ascend_agent.diagnosis.engine.Engine", FakeEngine)
@@ -648,7 +665,45 @@ class TestTUIAppConstruction:
             time.sleep(0.01)
 
         assert any("Diagnosis Results" in message.content for message in tui.messages)
+        assert any("Building context" in message.content for message in tui.messages)
+        assert any("Repository Info" in message.content for message in tui.messages)
+        assert any("ValueError" in message.content for message in tui.messages)
+        assert any("raise ValueError('boom')" in message.content for message in tui.messages)
         assert any("mcp server banner" in message.content for message in tui.messages)
+
+    def test_run_with_status_captures_logging_without_real_stderr_leak(self, capsys):
+        import logging
+        import threading
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        entered = threading.Event()
+        release = threading.Event()
+        logger = logging.getLogger("ascend_agent.test_tui_capture")
+        logger.setLevel(logging.WARNING)
+
+        def work():
+            entered.set()
+            logger.warning("TLS certificate verification is disabled")
+            release.wait(timeout=1)
+
+        tui = AscendTUI(provider="test", model="test-model")
+        tui._build_app()
+        tui._run_with_status("Running logging test...", work)
+
+        assert entered.wait(timeout=1)
+        release.set()
+        for _ in range(100):
+            if not tui._task_running:
+                break
+            import time
+            time.sleep(0.01)
+
+        captured = capsys.readouterr()
+        assert "TLS certificate verification is disabled" not in captured.err
+        assert any(
+            "TLS certificate verification is disabled" in message.content
+            for message in tui.messages
+        )
 
     def test_text_input_runs_callback_in_background_and_shows_working(self):
         import threading
