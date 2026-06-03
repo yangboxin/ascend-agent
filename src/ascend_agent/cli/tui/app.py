@@ -34,7 +34,7 @@ from typing import Callable, Optional
 from prompt_toolkit import Application
 from prompt_toolkit.application.current import get_app
 from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.completion import Completer, Completion, CompleteEvent
+from prompt_toolkit.completion import Completer, Completion, CompleteEvent, PathCompleter
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.key_binding import KeyBindings
@@ -92,7 +92,10 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
 
 
 class SlashCommandCompleter(Completer):
-    """Claude-style slash command completions for the TUI input buffer."""
+    """Claude-style slash command and path completions for the TUI input buffer."""
+
+    def __init__(self) -> None:
+        self._path_completer = PathCompleter(expanduser=True)
 
     def get_completions(self, document, complete_event):
         text = document.text_before_cursor
@@ -126,14 +129,30 @@ class SlashCommandCompleter(Completer):
 
         first, remainder = text.split(" ", 1)
         prefix = f"{first} {remainder}"
+        matched_command = False
         for command, description in SLASH_COMMANDS:
-            if command.startswith(prefix):
+            if command.startswith(prefix) and command != prefix:
+                matched_command = True
                 yield Completion(
                     command,
                     start_position=-len(prefix),
                     display=command,
                     display_meta=description,
                 )
+        if matched_command:
+            return
+
+        yield from self._path_completions(text)
+
+    def _path_completions(self, text: str):
+        """Complete the current whitespace-delimited argument as a path."""
+        if text.startswith("/models "):
+            return
+        current = "" if text[-1].isspace() else text.rsplit(maxsplit=1)[-1]
+        if current.startswith("--"):
+            return
+        path_document = Document(current, len(current))
+        yield from self._path_completer.get_completions(path_document, CompleteEvent(completion_requested=True))
 
 
 def _available_model_ids() -> list[str]:
@@ -487,6 +506,18 @@ class AscendTUI:
             """Ctrl+J: insert a newline without submitting."""
             self._input_buffer.insert_text("\n")
 
+        @kb.add("tab", eager=True)
+        def _tab_complete(event):
+            """Tab: open or accept command/path completion."""
+            complete_state = self._input_buffer.complete_state
+            if complete_state and complete_state.current_completion:
+                self._apply_completion(complete_state.current_completion)
+                return
+            try:
+                self._input_buffer.start_completion(select_first=True)
+            except RuntimeError:
+                self._refresh_slash_completions(select_first=True)
+
         @kb.add(Keys.ControlL)
         def _clear_screen(event):
             """Ctrl+L: clear messages."""
@@ -742,7 +773,7 @@ class AscendTUI:
             and self._input_buffer.text.startswith("/")
         )
 
-    def _refresh_slash_completions(self) -> None:
+    def _refresh_slash_completions(self, *, select_first: bool = False) -> None:
         """Refresh slash completions without selecting or inserting a candidate."""
         if not hasattr(self, "_input_buffer"):
             return
@@ -759,7 +790,9 @@ class AscendTUI:
             )
         )
         if completions:
-            self._input_buffer._set_completions(completions)
+            state = self._input_buffer._set_completions(completions)
+            if select_first and state.completions:
+                state.go_to_index(0)
         elif self._input_buffer.complete_state:
             self._input_buffer.cancel_completion()
 
@@ -972,7 +1005,7 @@ class AscendTUI:
             from ascend_agent.context.trace import trace_from_file, trace_from_text
             from ascend_agent.diagnosis.engine import Engine
             from ascend_agent.diagnosis.router import create_router
-            from ascend_agent.diagnosis.tool_client import create_tool_client
+            from ascend_agent.diagnosis.tool_client import LocalToolClient
 
             repo = str(positionals[0])
             trace_text = parsed.get("trace_text")
@@ -995,7 +1028,7 @@ class AscendTUI:
                 ),
             )
             router = create_router(provider=self._active_provider())
-            tool_client = create_tool_client()
+            tool_client = LocalToolClient()
             result = Engine(router=router, repo_path=repo, search_tool=tool_client.search_code).diagnose(doc)
             output = DiagnosisOutput(context_doc=doc, diagnosis_result=result)
             self._last_diagnosis = output

@@ -418,6 +418,28 @@ class TestTUIAppConstruction:
 
         assert any(completion.text == "deepseek/deepseek-v4-flash" for completion in completions)
 
+    def test_slash_command_completer_completes_paths(self, tmp_path, monkeypatch):
+        from prompt_toolkit.document import Document
+        from ascend_agent.cli.tui.app import SlashCommandCompleter
+
+        (tmp_path / "error.log").write_text("trace")
+        monkeypatch.chdir(tmp_path)
+
+        completions = list(SlashCommandCompleter().get_completions(Document("/diagnose repo --trace err"), None))
+
+        assert any(completion.text == "or.log" for completion in completions)
+
+    def test_slash_command_completer_completes_empty_path_argument(self, tmp_path, monkeypatch):
+        from prompt_toolkit.document import Document
+        from ascend_agent.cli.tui.app import SlashCommandCompleter
+
+        (tmp_path / "repo").mkdir()
+        monkeypatch.chdir(tmp_path)
+
+        completions = list(SlashCommandCompleter().get_completions(Document("/diagnose "), None))
+
+        assert any("repo" in str(completion.display) for completion in completions)
+
     def test_up_down_history_when_no_completion(self):
         from ascend_agent.cli.tui.app import AscendTUI
 
@@ -498,6 +520,26 @@ class TestTUIAppConstruction:
 
         assert tui._input_buffer.text == "/models "
 
+    def test_tab_confirms_path_completion(self, tmp_path, monkeypatch):
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        (tmp_path / "error.log").write_text("trace")
+        monkeypatch.chdir(tmp_path)
+        tui = AscendTUI(provider="test", model="test-model")
+        tui._build_app()
+        tui._input_buffer.text = "/diagnose repo --trace err"
+        tui._input_buffer.cursor_position = len(tui._input_buffer.text)
+        tui._refresh_slash_completions(select_first=True)
+
+        tab_binding = next(
+            binding
+            for binding in tui._app.key_bindings.bindings
+            if any(str(key) in ("tab", "Keys.Tab", "Keys.ControlI") for key in binding.keys)
+        )
+        tab_binding.handler(None)
+
+        assert tui._input_buffer.text == "/diagnose repo --trace error.log"
+
     def test_non_slash_stale_completion_does_not_block_history(self):
         from types import SimpleNamespace
         from ascend_agent.cli.tui.app import AscendTUI
@@ -566,6 +608,43 @@ class TestTUIAppConstruction:
 
         assert tui._task_running is False
         assert any("internal log" in message.content for message in tui.messages)
+
+    def test_tui_diagnose_uses_local_tool_client(self, tmp_path, monkeypatch):
+        from unittest.mock import Mock
+        from ascend_agent.cli.tui.app import AscendTUI
+        from ascend_agent.diagnosis.models import DiagnosisResult
+
+        trace_path = tmp_path / "error.log"
+        trace_path.write_text("ValueError: boom")
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        (repo_path / "app.py").write_text("raise ValueError('boom')\n")
+
+        class FakeEngine:
+            def __init__(self, *, search_tool, **kwargs):
+                self.search_tool = search_tool
+
+            def diagnose(self, doc):
+                return DiagnosisResult(hypotheses=[], errors=[], iterations_used=0)
+
+        monkeypatch.setattr("ascend_agent.diagnosis.router.create_router", lambda provider: Mock())
+        monkeypatch.setattr("ascend_agent.diagnosis.engine.Engine", FakeEngine)
+        monkeypatch.setattr(
+            "ascend_agent.diagnosis.tool_client.create_tool_client",
+            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("MCP client should not be created")),
+        )
+
+        tui = AscendTUI(provider="test", model="test-model")
+        tui._build_app()
+        tui._run_diagnose_command([str(repo_path), "--trace", str(trace_path)])
+
+        for _ in range(100):
+            if not tui._task_running:
+                break
+            import time
+            time.sleep(0.01)
+
+        assert any("Diagnosis Results" in message.content for message in tui.messages)
 
     def test_text_input_runs_callback_in_background_and_shows_working(self):
         import threading
