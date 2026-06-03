@@ -1171,7 +1171,8 @@ class AscendTUI:
             router = create_router(provider=self._active_provider())
             result = asyncio.run(
                 ReproductionEngine(router=router, repo_path=repo_path, settings=settings).reproduce(
-                    diagnosis.diagnosis_result
+                    diagnosis.diagnosis_result,
+                    trace=diagnosis.context_doc.trace,
                 )
             )
             result.repo_path = repo_path
@@ -1193,7 +1194,22 @@ class AscendTUI:
             f"Exit code: {result.exit_code}",
             f"Duration: {result.duration_seconds:.2f}s",
             f"Hypothesis tested: {result.hypothesis_id_tested}",
+            f"Reproduced: {'yes' if result.reproduced else 'no'}",
         ]
+        if result.repro_file:
+            lines.append(f"Bad case: {result.repro_file}")
+        if result.matched_error_signal:
+            lines.append(f"Matched signal: {result.matched_error_signal}")
+        if result.attempts:
+            lines.append("Attempts:")
+            for attempt in result.attempts:
+                label = attempt.kind.replace("_", " ")
+                lines.append(
+                    f"- {label}: {attempt.status} exit={attempt.exit_code} "
+                    f"matched={'yes' if attempt.matched_error else 'no'}"
+                )
+                if attempt.repro_file:
+                    lines.append(f"  file: {attempt.repro_file}")
         if result.stdout:
             lines.append(f"\nstdout:\n{result.stdout}")
         if result.stderr:

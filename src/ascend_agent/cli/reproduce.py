@@ -57,7 +57,12 @@ def reproduce_run(
 
     console.print("\n[bold cyan]Running reproduction...[/bold cyan]")
     try:
-        result = asyncio.run(engine.reproduce(diagnosis_output.diagnosis_result))
+        result = asyncio.run(
+            engine.reproduce(
+                diagnosis_output.diagnosis_result,
+                trace=diagnosis_output.context_doc.trace,
+            )
+        )
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=1)
@@ -71,6 +76,13 @@ def reproduce_run(
     console.print(f"Exit code: {result.exit_code}")
     console.print(f"Duration: {result.duration_seconds:.2f}s")
     console.print(f"Hypothesis tested: {result.hypothesis_id_tested}")
+    console.print(f"Reproduced: {'yes' if result.reproduced else 'no'}")
+    if result.repro_file:
+        console.print(f"Bad case: [cyan]{result.repro_file}[/cyan]")
+    if result.matched_error_signal:
+        console.print(f"Matched signal: {result.matched_error_signal}")
+    if result.attempts:
+        console.print(f"Attempts: {len(result.attempts)}")
     if result.stdout:
         console.print(f"\n[bold]stdout:[/bold]\n{result.stdout}")
     if result.stderr:

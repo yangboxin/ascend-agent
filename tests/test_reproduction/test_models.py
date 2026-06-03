@@ -64,6 +64,28 @@ def test_reproduction_result_defaults():
     assert r.stderr == ""
     assert r.exit_code == -1
     assert r.files_changed == []
+    assert r.reproduced is False
+    assert r.repro_file == ""
+    assert r.matched_error is False
+    assert r.matched_error_signal == ""
+    assert r.attempts == []
+
+
+def test_reproduction_attempt_valid():
+    from ascend_agent.diagnosis.models import ReproductionAttempt
+
+    attempt = ReproductionAttempt(
+        kind="generated_bad_case",
+        command="python -m pytest .ascend-agent/repros/test_repro_h0.py",
+        repro_file=".ascend-agent/repros/test_repro_h0.py",
+        status="success",
+        exit_code=0,
+        matched_error=True,
+        matched_signal="ValueError: boom",
+        summary="Generated bad case verified the reproduction",
+    )
+    assert attempt.matched_error is True
+    assert attempt.repro_file.endswith(".py")
 
 
 def test_reproduction_result_duration_negative_rejected():
