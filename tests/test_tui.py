@@ -65,8 +65,11 @@ class TestMessage:
 # ====================================================================
 
 class TestCommandHistory:
-    def test_add_and_navigate(self):
-        h = CommandHistory()
+    def _history(self, tmp_path):
+        return CommandHistory(history_file=str(tmp_path / "history.json"))
+
+    def test_add_and_navigate(self, tmp_path):
+        h = self._history(tmp_path)
         h.add("first command")
         h.add("second command")
         h.add("third command")
@@ -87,8 +90,8 @@ class TestCommandHistory:
         result = h.navigate_up("")
         assert result is None
 
-    def test_navigate_down_restores_input(self):
-        h = CommandHistory()
+    def test_navigate_down_restores_input(self, tmp_path):
+        h = self._history(tmp_path)
         h.add("old")
         h.add("new")
 
@@ -108,8 +111,8 @@ class TestCommandHistory:
         r = h.navigate_down()
         assert r == "my current input"  # back to present, restores saved input
 
-    def test_duplicate_suppression(self):
-        h = CommandHistory()
+    def test_duplicate_suppression(self, tmp_path):
+        h = self._history(tmp_path)
         h.add("cmd")
         h.add("cmd")
         h.add("cmd")
@@ -119,22 +122,22 @@ class TestCommandHistory:
         h.add("cmd")
         assert len(h) == 3  # cmd, other, cmd (not consecutive dupes)
 
-    def test_empty(self):
-        h = CommandHistory()
+    def test_empty(self, tmp_path):
+        h = self._history(tmp_path)
         assert not h
         assert len(h) == 0
         assert h.navigate_up("test") is None
         assert h.navigate_down() is None
 
-    def test_clear(self):
-        h = CommandHistory()
+    def test_clear(self, tmp_path):
+        h = self._history(tmp_path)
         h.add("cmd1")
         h.add("cmd2")
         h.clear()
         assert len(h) == 0
 
-    def test_search(self):
-        h = CommandHistory()
+    def test_search(self, tmp_path):
+        h = self._history(tmp_path)
         h.add("python test.py")
         h.add("pip install")
         h.add("python -m pytest")
@@ -142,8 +145,8 @@ class TestCommandHistory:
         assert len(results) == 2
         assert all("python" in r for r in results)
 
-    def test_get_recent(self):
-        h = CommandHistory()
+    def test_get_recent(self, tmp_path):
+        h = self._history(tmp_path)
         for i in range(20):
             h.add(f"cmd{i}")
         recent = h.get_recent(5)
@@ -465,6 +468,36 @@ class TestTUIAppConstruction:
 
         assert called["next"] == 1
 
+    def test_slash_opens_completion_without_inserting_first_candidate(self):
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        tui = AscendTUI(provider="test", model="test-model")
+        tui._build_app()
+        tui._input_buffer.text = "/"
+        tui._refresh_slash_completions()
+
+        assert tui._input_buffer.text == "/"
+        assert tui._input_buffer.complete_state is not None
+        assert tui._input_buffer.complete_state.current_completion is None
+
+    def test_enter_confirms_unique_slash_completion(self):
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        tui = AscendTUI(provider="test", model="test-model")
+        tui._build_app()
+        tui._input_buffer.text = "/mo"
+        tui._input_buffer.cursor_position = len("/mo")
+        tui._refresh_slash_completions()
+
+        enter_binding = next(
+            binding
+            for binding in tui._app.key_bindings.bindings
+            if any(str(key) in ("enter", "Keys.ControlM") for key in binding.keys)
+        )
+        enter_binding.handler(None)
+
+        assert tui._input_buffer.text == "/models "
+
     def test_non_slash_stale_completion_does_not_block_history(self):
         from types import SimpleNamespace
         from ascend_agent.cli.tui.app import AscendTUI
@@ -483,3 +516,44 @@ class TestTUIAppConstruction:
         up_binding.handler(None)
 
         assert tui._input_buffer.text == "previous"
+
+    def test_clear_command_clears_messages(self):
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        tui = AscendTUI(provider="test", model="test-model")
+        tui.add_user_message("hello")
+        tui._handle_slash_command("/clear")
+
+        assert tui.messages == []
+
+    def test_text_input_runs_callback_in_background_and_shows_working(self):
+        import threading
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        entered = threading.Event()
+        release = threading.Event()
+
+        def callback(text):
+            entered.set()
+            release.wait(timeout=1)
+
+        tui = AscendTUI(provider="test", model="test-model")
+        tui.set_on_user_input(callback)
+        tui._build_app()
+
+        tui._handle_text_input("hi")
+
+        assert tui.messages[0].content == "hi"
+        assert any(message.content == "Working..." for message in tui.messages)
+        assert entered.wait(timeout=1)
+        release.set()
+
+    def test_stream_chunk_clears_working_message(self):
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        tui = AscendTUI(provider="test", model="test-model")
+        tui._show_working_message()
+        tui._handle_stream_chunk("hello")
+
+        assert all(message.content != "Working..." for message in tui.messages)
+        assert tui.messages[-1].content == "hello"

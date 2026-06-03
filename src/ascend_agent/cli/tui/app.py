@@ -23,6 +23,7 @@ import json
 import signal
 import shlex
 import sys
+import threading
 import time
 from collections import defaultdict
 from pathlib import Path
@@ -31,7 +32,8 @@ from typing import Callable, Optional
 from prompt_toolkit import Application
 from prompt_toolkit.application.current import get_app
 from prompt_toolkit.buffer import Buffer
-from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.completion import Completer, Completion, CompleteEvent
+from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
@@ -80,6 +82,7 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/reproduce", "Reproduce the last diagnosis"),
     ("/verify", "Verify the last reproduction"),
     ("/chat ", "Send a chat message"),
+    ("/clear", "Clear the screen"),
     ("/reset-chat", "Clear chat history"),
     ("/help", "Show command help"),
     ("/quit", "Exit the session"),
@@ -217,6 +220,7 @@ class AscendTUI:
         self._last_fixes: FixGenerationResult | None = None
         self._last_reproduction: ReproductionResult | None = None
         self._last_verification: VerificationResult | None = None
+        self._working_message_id: str | None = None
 
         # --- Hooks / Managers ---
         self._history = CommandHistory(history_file=history_file)
@@ -358,7 +362,7 @@ class AscendTUI:
         # --- Input Buffer ---
         self._input_buffer = Buffer(
             completer=SlashCommandCompleter(),
-            complete_while_typing=False,
+            complete_while_typing=Condition(lambda: self._input_buffer.text.startswith("/")),
             multiline=True,
             accept_handler=self._handle_input_accept,
             name="ascend_input",
@@ -463,7 +467,10 @@ class AscendTUI:
                 return
             complete_state = self._input_buffer.complete_state
             if complete_state and complete_state.current_completion:
-                self._input_buffer.apply_completion(complete_state.current_completion)
+                self._apply_completion(complete_state.current_completion)
+                return
+            if self._slash_completion_active() and len(complete_state.completions) == 1:
+                self._apply_completion(complete_state.completions[0])
                 return
             self._input_buffer.validate_and_handle()
 
@@ -486,7 +493,10 @@ class AscendTUI:
         def _slash(event):
             """Slash: insert and open the command completion menu."""
             self._input_buffer.insert_text("/")
-            self._input_buffer.start_completion(select_first=True)
+            try:
+                self._input_buffer.start_completion(select_first=False)
+            except RuntimeError:
+                self._refresh_slash_completions()
 
         @kb.add(Keys.Escape, eager=True)
         def _cancel(event):
@@ -591,6 +601,7 @@ class AscendTUI:
                 "  /reproduce [diagnosis.json] [--output file]\n"
                 "  /verify [reproduction.json] [--output file]\n"
                 "  /chat <message>            Chat with the active LLM provider\n"
+                "  /clear                     Clear the screen\n"
                 "  /reset-chat                Clear chat history\n"
                 "  /help                      Show this help\n"
                 "  /quit                      Exit the session\n\n"
@@ -604,6 +615,9 @@ class AscendTUI:
                 "  Esc     Cancel current operation"
             )
             self.add_message(Message(role="system", content=help_text))
+
+        elif cmd in ("clear", "cls"):
+            self.clear_messages()
 
         elif cmd == "reset-chat":
             self.clear_messages()
@@ -641,16 +655,24 @@ class AscendTUI:
     def _handle_text_input(self, text: str) -> None:
         """Handle a regular (non-slash) text input as a user message."""
         self.add_user_message(text)
-        # The actual AI response will be handled by external streaming
-        # Call the on_user_input callback if set
         if self._on_user_input_callback:
-            try:
-                self._on_user_input_callback(text)
-            except Exception:
-                pass
+            self._show_working_message()
+
+            def run_callback() -> None:
+                try:
+                    self._on_user_input_callback(text)
+                except Exception as exc:
+                    self.add_message(Message(role="system", content=f"[red]Error:[/red] {exc}"))
+                finally:
+                    self._clear_working_message()
+                    self.set_status(streaming=False)
+
+            self.set_status(streaming=True)
+            threading.Thread(target=run_callback, daemon=True).start()
 
     def _handle_stream_chunk(self, text: str) -> None:
         """Called for each chunk of streaming response."""
+        self._clear_working_message()
         self.append_to_assistant(text)
 
     def _handle_stream_complete(self) -> None:
@@ -661,10 +683,27 @@ class AscendTUI:
     def _handle_stream_error(self, error: Exception) -> None:
         """Called when streaming encounters an error."""
         self._status.set_streaming(False)
+        self._clear_working_message()
         self.add_message(Message(
             role="system",
             content=f"[red]Stream error:[/red] {error}"
         ))
+
+    def _show_working_message(self) -> None:
+        """Display a lightweight pending indicator while the backend starts."""
+        if self._working_message_id is not None:
+            return
+        message = Message(role="system", content="Working...")
+        self._working_message_id = message.id
+        self.add_message(message)
+
+    def _clear_working_message(self) -> None:
+        """Remove the pending indicator once output or an error arrives."""
+        if self._working_message_id is None:
+            return
+        self._messages = [msg for msg in self._messages if msg.id != self._working_message_id]
+        self._working_message_id = None
+        self._invalidate()
 
     def _invalidate(self) -> None:
         """Request a UI redraw from the application."""
@@ -698,6 +737,36 @@ class AscendTUI:
             self._input_buffer.complete_state
             and self._input_buffer.text.startswith("/")
         )
+
+    def _refresh_slash_completions(self) -> None:
+        """Refresh slash completions without selecting or inserting a candidate."""
+        if not hasattr(self, "_input_buffer"):
+            return
+        text = self._input_buffer.text
+        if not text.startswith("/") or "\n" in text:
+            if self._input_buffer.complete_state:
+                self._input_buffer.cancel_completion()
+            return
+
+        completions = list(
+            SlashCommandCompleter().get_completions(
+                Document(text, len(text)),
+                CompleteEvent(text_inserted=True),
+            )
+        )
+        if completions:
+            self._input_buffer._set_completions(completions)
+        elif self._input_buffer.complete_state:
+            self._input_buffer.cancel_completion()
+
+    def _apply_completion(self, completion: Completion) -> None:
+        """Apply a completion without immediately reopening completions."""
+        complete_while_typing = self._input_buffer.complete_while_typing
+        self._input_buffer.complete_while_typing = Condition(lambda: False)
+        try:
+            self._input_buffer.apply_completion(completion)
+        finally:
+            self._input_buffer.complete_while_typing = complete_while_typing
 
     def _parse_args(self, args: list[str]) -> dict[str, str | bool | list[str]]:
         parsed: dict[str, str | bool | list[str]] = {"_": []}
