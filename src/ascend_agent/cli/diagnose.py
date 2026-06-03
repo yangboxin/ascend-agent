@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import io
 import sys
 from typing import Optional
 
@@ -21,6 +22,22 @@ from ascend_agent.diagnosis.tool_client import create_tool_client
 
 console = Console()
 diagnose_app = typer.Typer(name="diagnose", help="Diagnose an issue from a stack trace against a code repository")
+
+
+def render_context(doc: ContextDocument, width: int = 120) -> str:
+    """Render the CLI context display as plain text for non-CLI surfaces."""
+    buffer = io.StringIO()
+    render_console = Console(file=buffer, force_terminal=False, width=width)
+    _display_context(doc, target_console=render_console)
+    return buffer.getvalue().rstrip()
+
+
+def render_diagnosis(result: DiagnosisResult, width: int = 120) -> str:
+    """Render the CLI diagnosis display as plain text for non-CLI surfaces."""
+    buffer = io.StringIO()
+    render_console = Console(file=buffer, force_terminal=False, width=width)
+    _display_diagnosis(result, target_console=render_console)
+    return buffer.getvalue().rstrip()
 
 
 @diagnose_app.command(name="run")
@@ -193,7 +210,8 @@ def _repl_mode(repo: str, provider: str = "openai"):
             _display_context(current_doc)
 
 
-def _display_context(doc: ContextDocument):
+def _display_context(doc: ContextDocument, target_console: Console | None = None):
+    out = target_console or console
     if doc.repo:
         table = Table(title="Repository Info")
         table.add_column("Property", style="cyan")
@@ -205,47 +223,48 @@ def _display_context(doc: ContextDocument):
         if len(doc.repo.structure) > 10:
             structure_preview += ", ..."
         table.add_row("Structure", structure_preview)
-        console.print(table)
+        out.print(table)
 
     if doc.trace:
         if doc.trace.error_type:
-            console.print(f"\n[bold red]Error:[/bold red] {doc.trace.error_type}")
-            console.print(f"[red]{doc.trace.error_message or ''}[/red]")
+            out.print(f"\n[bold red]Error:[/bold red] {doc.trace.error_type}")
+            out.print(f"[red]{doc.trace.error_message or ''}[/red]")
         else:
-            console.print("\n[bold yellow]Error:[/bold yellow] not detected")
+            out.print("\n[bold yellow]Error:[/bold yellow] not detected")
             if doc.trace.parse_warnings:
-                console.print(f"[dim]{', '.join(doc.trace.parse_warnings)}[/dim]")
+                out.print(f"[dim]{', '.join(doc.trace.parse_warnings)}[/dim]")
         if doc.trace.signal_candidates:
             preview = ", ".join(
                 f"{candidate.kind}={candidate.value} ({candidate.confidence:.2f})"
                 for candidate in doc.trace.signal_candidates[:5]
             )
-            console.print(f"[yellow]Uncertain signals:[/yellow] {preview}")
-        console.print("\n[bold]Stack Trace:[/bold]")
+            out.print(f"[yellow]Uncertain signals:[/yellow] {preview}")
+        out.print("\n[bold]Stack Trace:[/bold]")
         for i, frame in enumerate(doc.trace.frames):
             if i >= 10:
-                console.print(f"  [dim]... {len(doc.trace.frames) - 10} more frames[/dim]")
+                out.print(f"  [dim]... {len(doc.trace.frames) - 10} more frames[/dim]")
                 break
-            console.print(f"  [dim]{frame.file}:{frame.line}[/dim] [yellow]{frame.function}[/yellow]")
+            out.print(f"  [dim]{frame.file}:{frame.line}[/dim] [yellow]{frame.function}[/yellow]")
 
-    console.print(f"\n[dim]Environment: Python {doc.config_env.python_version[:6]} on {doc.config_env.platform}[/dim]")
+    out.print(f"\n[dim]Environment: Python {doc.config_env.python_version[:6]} on {doc.config_env.platform}[/dim]")
 
 
-def _display_diagnosis(result: DiagnosisResult):
-    console.print("\n[bold]Diagnosis Results[/bold]")
-    console.print(f"[cyan]Search iterations used: {result.iterations_used}/3[/cyan]")
+def _display_diagnosis(result: DiagnosisResult, target_console: Console | None = None):
+    out = target_console or console
+    out.print("\n[bold]Diagnosis Results[/bold]")
+    out.print(f"[cyan]Search iterations used: {result.iterations_used}/3[/cyan]")
 
     if result.errors:
         error_text = "\n".join(
             f"[red]{e.stage}:[/red] {e.reason}" + (f"\n[dim]{e.details}[/dim]" if e.details else "")
             for e in result.errors
         )
-        console.print(Panel(error_text, title="Partial Failures", border_style="red"))
+        out.print(Panel(error_text, title="Partial Failures", border_style="red"))
 
     if not result.hypotheses:
-        console.print("[yellow]No hypotheses could be generated.[/yellow]")
+        out.print("[yellow]No hypotheses could be generated.[/yellow]")
         if result.errors:
-            console.print("[dim]See Partial Failures above for details.[/dim]")
+            out.print("[dim]See Partial Failures above for details.[/dim]")
     else:
         for i, hyp in enumerate(result.hypotheses, 1):
             border = "green" if hyp.confidence >= 0.7 else ("yellow" if hyp.confidence >= 0.4 else "red")
@@ -254,11 +273,11 @@ def _display_diagnosis(result: DiagnosisResult):
                 title=f"Hypothesis #{i} — Confidence: {hyp.confidence:.0%}",
                 border_style=border,
             )
-            console.print(panel)
-            console.print(f"[bold]Root Cause:[/bold] {hyp.root_cause}")
+            out.print(panel)
+            out.print(f"[bold]Root Cause:[/bold] {hyp.root_cause}")
             for ev in hyp.evidence:
-                console.print(f"[blue]File: {ev.file_path}:{ev.line_number}[/blue]")
-                console.print(Syntax(ev.code_snippet, "python", theme="monokai", line_numbers=True))
-                console.print(f"[italic]{ev.relevance}[/italic]")
+                out.print(f"[blue]File: {ev.file_path}:{ev.line_number}[/blue]")
+                out.print(Syntax(ev.code_snippet, "python", theme="monokai", line_numbers=True))
+                out.print(f"[italic]{ev.relevance}[/italic]")
 
-    console.print("\n[dim]Diagnosis complete.[/dim]")
+    out.print("\n[dim]Diagnosis complete.[/dim]")

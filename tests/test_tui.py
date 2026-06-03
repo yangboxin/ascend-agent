@@ -668,6 +668,8 @@ class TestTUIAppConstruction:
         assert any("Building context" in message.content for message in tui.messages)
         assert any("Repository Info" in message.content for message in tui.messages)
         assert any("ValueError" in message.content for message in tui.messages)
+        assert any("Confidence: 90%" in message.content for message in tui.messages)
+        assert any("File: app.py:1" in message.content for message in tui.messages)
         assert any("raise ValueError('boom')" in message.content for message in tui.messages)
         assert any("mcp server banner" in message.content for message in tui.messages)
 

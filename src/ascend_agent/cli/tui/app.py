@@ -1020,6 +1020,7 @@ class AscendTUI:
             return
 
         def work() -> None:
+            from ascend_agent.cli.diagnose import render_context, render_diagnosis
             from ascend_agent.config import settings
             from ascend_agent.context.models import ConfigEnv, ContextDocument
             from ascend_agent.context.repo import RepoScanner
@@ -1049,7 +1050,7 @@ class AscendTUI:
                     env_vars=settings.env_vars,
                 ),
             )
-            self.add_message(Message(role="assistant", content=self._format_context(doc)))
+            self.add_message(Message(role="assistant", content=render_context(doc)))
             self.add_message(Message(role="system", content="Running diagnosis..."))
             router = create_router(provider=self._active_provider())
             tool_output = io.StringIO()
@@ -1057,15 +1058,15 @@ class AscendTUI:
             result = Engine(router=router, repo_path=repo, search_tool=tool_client.search_code).diagnose(doc)
             output = DiagnosisOutput(context_doc=doc, diagnosis_result=result)
             self._last_diagnosis = output
+            captured_tool_output = tool_output.getvalue().strip()
+            if captured_tool_output:
+                self.add_message(Message(role="system", content=f"Command output:\n{captured_tool_output}"))
             output_path = parsed.get("output")
             saved = ""
             if isinstance(output_path, str):
                 Path(output_path).write_text(output.model_dump_json(indent=2))
                 saved = f"\nSaved diagnosis JSON: {output_path}"
-            self.add_message(Message(role="assistant", content=self._format_diagnosis(result) + saved))
-            captured_tool_output = tool_output.getvalue().strip()
-            if captured_tool_output:
-                self.add_message(Message(role="system", content=f"Tool output:\n{captured_tool_output}"))
+            self.add_message(Message(role="assistant", content=render_diagnosis(result) + saved))
 
         self._run_with_status("Running diagnosis...", work)
 
