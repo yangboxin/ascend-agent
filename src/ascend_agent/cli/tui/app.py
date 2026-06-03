@@ -1005,7 +1005,7 @@ class AscendTUI:
             from ascend_agent.context.trace import trace_from_file, trace_from_text
             from ascend_agent.diagnosis.engine import Engine
             from ascend_agent.diagnosis.router import create_router
-            from ascend_agent.diagnosis.tool_client import LocalToolClient
+            from ascend_agent.diagnosis.tool_client import create_tool_client
 
             repo = str(positionals[0])
             trace_text = parsed.get("trace_text")
@@ -1028,7 +1028,8 @@ class AscendTUI:
                 ),
             )
             router = create_router(provider=self._active_provider())
-            tool_client = LocalToolClient()
+            tool_output = io.StringIO()
+            tool_client = create_tool_client(errlog=tool_output)
             result = Engine(router=router, repo_path=repo, search_tool=tool_client.search_code).diagnose(doc)
             output = DiagnosisOutput(context_doc=doc, diagnosis_result=result)
             self._last_diagnosis = output
@@ -1038,6 +1039,9 @@ class AscendTUI:
                 Path(output_path).write_text(output.model_dump_json(indent=2))
                 saved = f"\nSaved diagnosis JSON: {output_path}"
             self.add_message(Message(role="assistant", content=self._format_diagnosis(result) + saved))
+            captured_tool_output = tool_output.getvalue().strip()
+            if captured_tool_output:
+                self.add_message(Message(role="system", content=f"Tool output:\n{captured_tool_output}"))
 
         self._run_with_status("Running diagnosis...", work)
 

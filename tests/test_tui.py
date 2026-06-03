@@ -609,7 +609,7 @@ class TestTUIAppConstruction:
         assert tui._task_running is False
         assert any("internal log" in message.content for message in tui.messages)
 
-    def test_tui_diagnose_uses_local_tool_client(self, tmp_path, monkeypatch):
+    def test_tui_diagnose_uses_tool_client_with_captured_errlog(self, tmp_path, monkeypatch):
         from unittest.mock import Mock
         from ascend_agent.cli.tui.app import AscendTUI
         from ascend_agent.diagnosis.models import DiagnosisResult
@@ -629,10 +629,13 @@ class TestTUIAppConstruction:
 
         monkeypatch.setattr("ascend_agent.diagnosis.router.create_router", lambda provider: Mock())
         monkeypatch.setattr("ascend_agent.diagnosis.engine.Engine", FakeEngine)
-        monkeypatch.setattr(
-            "ascend_agent.diagnosis.tool_client.create_tool_client",
-            lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("MCP client should not be created")),
-        )
+
+        def fake_create_tool_client(*, errlog=None, **kwargs):
+            assert errlog is not None
+            errlog.write("mcp server banner\n")
+            return Mock(search_code=Mock())
+
+        monkeypatch.setattr("ascend_agent.diagnosis.tool_client.create_tool_client", fake_create_tool_client)
 
         tui = AscendTUI(provider="test", model="test-model")
         tui._build_app()
@@ -645,6 +648,7 @@ class TestTUIAppConstruction:
             time.sleep(0.01)
 
         assert any("Diagnosis Results" in message.content for message in tui.messages)
+        assert any("mcp server banner" in message.content for message in tui.messages)
 
     def test_text_input_runs_callback_in_background_and_shows_working(self):
         import threading

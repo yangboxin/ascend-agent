@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import sys
 import shlex
 from collections.abc import Sequence
-from typing import Any, Protocol
+from typing import Any, Protocol, TextIO
 
 from ascend_agent.config import Settings
 from ascend_agent.tools.code_search import search_code
@@ -28,10 +29,12 @@ class MCPToolClient:
         command: str,
         args: Sequence[str] | None = None,
         cwd: str | None = None,
+        errlog: TextIO | None = None,
     ):
         self._command = command
         self._args = list(args or [])
         self._cwd = cwd
+        self._errlog = errlog or sys.stderr
 
     async def search_code(self, pattern: str, path: str) -> str:
         payload = await self._call_tool(
@@ -48,7 +51,7 @@ class MCPToolClient:
             args=self._args,
             cwd=self._cwd,
         )
-        async with stdio_client(params) as (read_stream, write_stream):
+        async with stdio_client(params, errlog=self._errlog) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
                 result = await session.call_tool(name, arguments)
@@ -84,7 +87,10 @@ class FallbackToolClient:
             return await self._fallback.search_code(pattern, path)
 
 
-def create_tool_client(settings: Settings | None = None) -> DiagnosisToolClient:
+def create_tool_client(
+    settings: Settings | None = None,
+    errlog: TextIO | None = None,
+) -> DiagnosisToolClient:
     """Create the tool client used by diagnosis workflows.
 
     Behavior is controlled by `ASCEND_DIAGNOSIS_TOOL_BACKEND`:
@@ -104,5 +110,5 @@ def create_tool_client(settings: Settings | None = None) -> DiagnosisToolClient:
 
     command = command_parts[0]
     args = command_parts[1:]
-    mcp_client = MCPToolClient(command=command, args=args)
+    mcp_client = MCPToolClient(command=command, args=args, errlog=errlog)
     return FallbackToolClient(primary=mcp_client, fallback=local_client)

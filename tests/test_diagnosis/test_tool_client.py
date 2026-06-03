@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import io
+import sys
+import types
 from types import SimpleNamespace
 
 import pytest
@@ -69,3 +72,48 @@ def test_create_tool_client_auto_backend_wraps_mcp():
     client = create_tool_client(settings=settings)
 
     assert isinstance(client, FallbackToolClient)
+
+
+def test_mcp_tool_client_passes_errlog(monkeypatch):
+    captured = {}
+    errlog = io.StringIO()
+    client = MCPToolClient(command="python", errlog=errlog)
+
+    class FakeSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def initialize(self):
+            return None
+
+        async def call_tool(self, name, arguments):
+            return SimpleNamespace(structuredContent={"result": "ok"}, content=[])
+
+    class FakeStdio:
+        async def __aenter__(self):
+            return object(), object()
+
+        async def __aexit__(self, *args):
+            return None
+
+    def fake_stdio_client(params, errlog=None):
+        captured["errlog"] = errlog
+        return FakeStdio()
+
+    mcp_client = types.ModuleType("mcp.client")
+    mcp_session = types.ModuleType("mcp.client.session")
+    mcp_stdio = types.ModuleType("mcp.client.stdio")
+    mcp_session.ClientSession = lambda read, write: FakeSession()
+    mcp_stdio.StdioServerParameters = lambda **kwargs: SimpleNamespace(**kwargs)
+    mcp_stdio.stdio_client = fake_stdio_client
+    monkeypatch.setitem(sys.modules, "mcp.client", mcp_client)
+    monkeypatch.setitem(sys.modules, "mcp.client.session", mcp_session)
+    monkeypatch.setitem(sys.modules, "mcp.client.stdio", mcp_stdio)
+
+    import asyncio
+    asyncio.run(client.search_code("x", "."))
+
+    assert captured["errlog"] is errlog
