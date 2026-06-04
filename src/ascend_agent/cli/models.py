@@ -71,7 +71,7 @@ def render_models(cm: ConfigManager, *, show_help: bool = True) -> None:
     if show_help:
         console.print(
             "[dim]Use /models use openai/gpt-5.5, /models add deepseek, "
-            "or /models status. Use /models tui for the old full-screen picker.[/dim]"
+            "or /models status.[/dim]"
         )
 
 
@@ -158,11 +158,6 @@ def handle_models_command(args: list[str], cm: ConfigManager) -> bool:
             api_key = console.input("API key (empty to use env): ").strip()
             record = add_provider(cm, provider, api_key=api_key, base_url=base_url, model=model)
             console.print(f"[green]Provider connected:[/green] {record.name}/{record.default_model}")
-            return True
-        elif action == "tui":
-            from ascend_agent.cli.models_browser import show_provider_browser
-
-            show_provider_browser(cm)
             return True
         else:
             selected = use_model(cm, action)

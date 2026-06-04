@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from ascend_agent.runtime import AgentLoop, PermissionPolicy, QueryEngine, Session, ToolRegistry
+from ascend_agent.tools.catalog import list_tools, to_langchain_tools_for_workdir
 
 
 class FakeRouter:
@@ -30,6 +31,15 @@ def test_tool_registry_describes_catalog_tools():
 
     assert "diagnose_trace" in registry.tools
     assert "diagnose_trace" in registry.describe()
+
+
+def test_langchain_tool_binding_scopes_workdir(tmp_path: Path):
+    tools = to_langchain_tools_for_workdir(list_tools(["workflow:ascend:diagnose_trace"]), tmp_path)
+
+    diagnose = tools[0]
+    assert diagnose.name == "diagnose_trace"
+    assert diagnose.description
+    assert "kwargs" in diagnose.args
 
 
 @pytest.mark.asyncio

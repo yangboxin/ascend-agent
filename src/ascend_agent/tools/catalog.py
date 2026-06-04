@@ -86,6 +86,20 @@ BUILTIN_TOOLS: tuple[ToolSpec, ...] = (
     ),
 )
 
+_PATH_ARGUMENTS = {
+    "code_search": ("path",),
+    "edit_file": ("file_path",),
+}
+
+_WORKING_DIR_ARGUMENTS = {
+    "edit_file": {"repo_path": "repo"},
+    "exec_shell": {"cwd": "root"},
+    "diagnose_trace": {"working_dir": "root"},
+    "generate_fixes": {"working_dir": "root"},
+    "reproduce_issue": {"working_dir": "root"},
+    "verify_fix": {"working_dir": "root"},
+}
+
 
 def list_tools(patterns: list[str] | None = None) -> list[ToolSpec]:
     return [tool for tool in BUILTIN_TOOLS if _matches_patterns(tool, patterns)]
@@ -155,100 +169,20 @@ def _bind_to_workdir(tool: ToolSpec, working_dir: Path | None) -> ToolCallable:
         return tool.func
     root = working_dir.resolve()
 
-    if tool.name == "code_search":
-        async def code_search_bound(pattern: str, path: str = ".") -> str:
-            """Search files inside the agent working directory."""
-            safe_path = _resolve_inside_root(root, path)
-            return await search_code(pattern=pattern, path=str(safe_path))
+    async def bound_tool(**kwargs: Any) -> str:
+        for argument in _PATH_ARGUMENTS.get(tool.name, ()):
+            if argument in kwargs:
+                kwargs[argument] = str(_resolve_inside_root(root, kwargs[argument]))
+        for argument, source in _WORKING_DIR_ARGUMENTS.get(tool.name, {}).items():
+            kwargs.setdefault(argument, str(root) if source == "root" else ".")
+        result = tool.func(**kwargs)
+        if inspect.isawaitable(result):
+            return await result
+        return str(result)
 
-        return code_search_bound
-
-    if tool.name == "edit_file":
-        async def edit_file_bound(file_path: str, operations: list[dict]) -> str:
-            """Edit one file inside the agent working directory."""
-            safe_path = _resolve_inside_root(root, file_path)
-            return await edit_file(file_path=str(safe_path), operations=operations, repo_path=str(root))
-
-        return edit_file_bound
-
-    if tool.name == "exec_shell":
-        async def exec_shell_bound(command: str, timeout: int = 60) -> str:
-            """Execute a shell command from the agent working directory."""
-            return await exec_shell(command=command, timeout=timeout, cwd=str(root))
-
-        return exec_shell_bound
-
-    if tool.name == "diagnose_trace":
-        async def diagnose_trace_bound(
-            repo_path: str = ".",
-            trace_text: str | None = None,
-            trace_file: str | None = None,
-            provider: str = "openai",
-        ) -> str:
-            """Diagnose a trace inside the agent working directory."""
-            return await diagnose_trace(
-                repo_path=repo_path,
-                trace_text=trace_text,
-                trace_file=trace_file,
-                provider=provider,
-                working_dir=str(root),
-            )
-
-        return diagnose_trace_bound
-
-    if tool.name == "generate_fixes":
-        async def generate_fixes_bound(
-            diagnosis_json: str,
-            repo_path: str = ".",
-            provider: str = "openai",
-        ) -> str:
-            """Generate fixes for diagnosis JSON inside the agent working directory."""
-            return await generate_fixes(
-                diagnosis_json=diagnosis_json,
-                repo_path=repo_path,
-                provider=provider,
-                working_dir=str(root),
-            )
-
-        return generate_fixes_bound
-
-    if tool.name == "reproduce_issue":
-        async def reproduce_issue_bound(
-            diagnosis_json: str,
-            repo_path: str = ".",
-            trace_text: str | None = None,
-            provider: str = "openai",
-        ) -> str:
-            """Reproduce a diagnosis inside the agent working directory."""
-            return await reproduce_issue(
-                diagnosis_json=diagnosis_json,
-                repo_path=repo_path,
-                trace_text=trace_text,
-                provider=provider,
-                working_dir=str(root),
-            )
-
-        return reproduce_issue_bound
-
-    if tool.name == "verify_fix":
-        async def verify_fix_bound(
-            reproduction_json: str,
-            repo_path: str = ".",
-            provider: str = "openai",
-            timeout: int = 300,
-        ) -> str:
-            """Verify a fix inside the agent working directory."""
-            return await verify_fix(
-                reproduction_json=reproduction_json,
-                repo_path=repo_path,
-                provider=provider,
-                timeout=timeout,
-                working_dir=str(root),
-            )
-
-        return verify_fix_bound
-
-    return tool.func
+    bound_tool.__name__ = f"{tool.name}_bound"
+    bound_tool.__doc__ = f"{tool.description} Scoped to the agent working directory."
+    return bound_tool
 
 
 def _resolve_inside_root(root: Path, value: str) -> Path:
