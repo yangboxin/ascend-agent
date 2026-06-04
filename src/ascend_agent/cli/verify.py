@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
-import json
-import sys
 
 from typing import Optional
 
@@ -16,6 +13,7 @@ from rich.table import Table
 from ascend_agent.config import settings
 from ascend_agent.diagnosis.models import ReproductionResult
 from ascend_agent.diagnosis.router import create_router
+from ascend_agent.cli.io import load_model_json, maybe_await, write_model_json
 from ascend_agent.verification.engine import VerificationEngine
 
 console = Console()
@@ -40,16 +38,9 @@ def verify_run(
     files to test files, runs the relevant tests, and displays pass/fail results.
     """
     try:
-        with open(reproduction) as f:
-            data = f.read()
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        console.print(f"[red]Error:[/red] Failed to read reproduction JSON: {e}")
-        raise typer.Exit(code=1)
-
-    try:
-        reproduction_result = ReproductionResult.model_validate_json(data)
-    except Exception as e:
-        console.print(f"[red]Error:[/red] Failed to parse reproduction JSON: {e}")
+        reproduction_result = load_model_json(ReproductionResult, reproduction, label="reproduction")
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=1)
 
     repo_path = reproduction_result.repo_path or settings.repo_path or "."
@@ -65,8 +56,7 @@ def verify_run(
 
     console.print("\n[bold cyan]Running verification...[/bold cyan]")
     try:
-        verify_result = engine.verify(reproduction_result)
-        result = asyncio.run(verify_result) if inspect.isawaitable(verify_result) else verify_result
+        result = asyncio.run(maybe_await(engine.verify(reproduction_result)))
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=1)
@@ -105,8 +95,7 @@ def verify_run(
         console.print(table)
 
     if output is not None:
-        with open(output, "w") as f:
-            f.write(result.model_dump_json(indent=2))
+        write_model_json(result, output)
         console.print(f"[green]Saved verification result to {output}[/green]")
 
     if result.status in ("fail", "error", "timeout"):

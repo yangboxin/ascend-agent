@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from collections import defaultdict
 from pathlib import Path
-import sys
 
 import typer
 from rich.console import Console
@@ -17,6 +15,7 @@ from ascend_agent.diagnosis.fix_engine import FixEngine
 from ascend_agent.diagnosis.models import DiagnosisOutput, FixSuggestion, FixGenerationResult, PartialFailure
 from typing import Optional
 
+from ascend_agent.cli.io import load_model_json
 from ascend_agent.diagnosis.router import create_router
 from ascend_agent.tools.file_edit import edit_file
 
@@ -34,27 +33,14 @@ def fix_run(
     provider: Optional[str] = typer.Option(None, "--provider", help="LLM provider (overrides root --provider)"),
 ):
     """Generate fix suggestions for a diagnosis result. Provide a diagnosis JSON file or pipe via stdin."""
-    # ── 1. Read diagnosis JSON (D-17: file path or stdin) ──
     try:
-        if diagnosis_file is not None:
-            with open(diagnosis_file) as f:
-                data = f.read()
-        elif not sys.stdin.isatty():
-            data = sys.stdin.read()
-        else:
-            console.print("[red]Error:[/red] No diagnosis input provided. "
-                          "Provide a file path or pipe JSON via stdin.")
-            raise typer.Exit(code=1)
-
-        diagnosis_output = DiagnosisOutput.model_validate_json(data)
-    except (json.JSONDecodeError, Exception) as e:
-        console.print(f"[red]Error:[/red] Failed to parse diagnosis JSON: {e}")
+        diagnosis_output = load_model_json(DiagnosisOutput, diagnosis_file, label="diagnosis")
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=1)
 
-    # ── 2. Extract repo path (D-18) ──
     repo_path = diagnosis_output.context_doc.repo.path
 
-    # ── 3. Initialize FixEngine (D-07: ASCEND_FIX_MODEL) ──
     resolved_provider = provider or (ctx.obj.get("provider", "openai") if ctx.obj else "openai")
     try:
         router = create_router(provider=resolved_provider)
@@ -66,7 +52,6 @@ def fix_run(
         )
         raise typer.Exit(code=1)
 
-    # ── 4. Generate fixes ──
     console.print("\n[bold cyan]Generating fix suggestions...[/bold cyan]")
     try:
         result = engine.generate_fixes(diagnosis_output.diagnosis_result)
@@ -74,23 +59,19 @@ def fix_run(
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=1)
 
-    # ── 5. Display summary ──
     _display_fix_summary(result)
 
     if not result.suggestions:
         console.print("[yellow]No fix suggestions could be generated.[/yellow]")
         return
 
-    # ── 6. Review workflow (D-09 through D-11) ──
     accepted = _run_review_workflow(result.suggestions, repo_path)
 
-    # ── 7. Batch apply (D-12) ──
     if accepted:
-        apply_result = _apply_fixes_batch(accepted, repo_path)
+        _apply_fixes_batch(accepted, repo_path)
     else:
         console.print("\n[yellow]No fixes were accepted. Skipping batch apply.[/yellow]")
 
-    # ── 8. Save output (D-19) ──
     if output and accepted:
         _save_fixes_output(accepted, output)
 

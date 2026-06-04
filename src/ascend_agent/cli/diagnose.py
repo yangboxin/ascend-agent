@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 import sys
 from typing import Optional
 
 import typer
-from rich.console import Console, Group
+from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
 from rich.table import Table
@@ -15,7 +14,7 @@ from ascend_agent.context.models import ConfigEnv, ContextDocument
 from ascend_agent.context.repo import RepoScanner
 from ascend_agent.context.trace import trace_from_file, trace_from_stdin, trace_from_text
 from ascend_agent.diagnosis.engine import Engine
-from ascend_agent.diagnosis.models import DiagnosisOutput, DiagnosisResult, Hypothesis, Evidence, PartialFailure
+from ascend_agent.diagnosis.models import DiagnosisOutput, DiagnosisResult
 from ascend_agent.diagnosis.router import create_router
 from ascend_agent.diagnosis.tool_client import create_tool_client
 
@@ -30,7 +29,6 @@ def diagnose_run(
     trace: Optional[str] = typer.Option(None, "--trace", help="Path to trace/log file"),
     trace_text: Optional[str] = typer.Option(None, "--trace-text", help="Inline pasted trace text"),
     output: Optional[str] = typer.Option(None, "--output", help="Path to write context as JSON"),
-    interactive: bool = typer.Option(False, "--interactive", "-i", help="Start interactive REPL mode"),
     provider: Optional[str] = typer.Option(None, "--provider", help="LLM provider (overrides root --provider)"),
 ):
     """Analyze a stack trace against a code repository.
@@ -39,11 +37,6 @@ def diagnose_run(
     The repository path is required and must be a local directory.
     """
     resolved_provider = provider or (ctx.obj.get("provider", "openai") if ctx.obj else "openai")
-
-    if interactive:
-        _repl_mode(repo, resolved_provider)
-        return
-
     _one_shot_mode(repo, trace, trace_text, output, resolved_provider)
 
 
@@ -100,97 +93,6 @@ def _one_shot_mode(
         output_wrapper = DiagnosisOutput(context_doc=doc, diagnosis_result=result)
         with open(output_path, "w") as f:
             f.write(output_wrapper.model_dump_json(indent=2))
-
-
-def _repl_mode(repo: str, provider: str = "openai"):
-    console.print("[bold]Ascend Diagnostic Agent — REPL mode[/bold]")
-    console.print("Type a stack trace or ':help' for commands.")
-    console.print(f"[dim]Active LLM provider: {provider}[/dim]")
-
-    try:
-        repo_info = RepoScanner().scan(repo)
-    except OSError as e:
-        console.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(code=1)
-
-    config_env = ConfigEnv(
-        python_version=settings.python_version,
-        platform=settings.platform,
-        env_vars=settings.env_vars,
-    )
-    current_doc = ContextDocument(repo=repo_info, config_env=config_env)
-    router = None
-    chat_messages = [
-        {
-            "role": "system",
-            "content": (
-                "You are the currently selected Ascend Diagnostic Agent LLM. "
-                "Answer concisely and use the current diagnostic context when provided."
-            ),
-        }
-    ]
-
-    while True:
-        prompt = console.input("[cyan]>[/cyan] ")
-        if prompt.startswith(":"):
-            cmd = prompt[1:].strip()
-            if cmd in ("quit", "exit"):
-                break
-            elif cmd == "help":
-                console.print("Commands:")
-                console.print("  :help        Show this help")
-                console.print("  :repo <path> Rescan with new repo path")
-                console.print("  :output      Print JSON of current context")
-                console.print("  :chat <msg>  Chat with the active LLM provider")
-                console.print("  :reset-chat  Clear LLM chat history")
-                console.print("  :quit/:exit  Exit REPL")
-            elif cmd == "output":
-                console.print(current_doc.model_dump_json(indent=2))
-            elif cmd.startswith("chat "):
-                user_message = cmd[5:].strip()
-                if not user_message:
-                    console.print("[yellow]Usage:[/yellow] :chat <message>")
-                    continue
-                if router is None:
-                    try:
-                        router = create_router(provider=provider)
-                    except ValueError as e:
-                        console.print(f"[red]Error:[/red] {e}")
-                        continue
-                context = current_doc.model_dump_json(indent=2)
-                chat_messages.append(
-                    {
-                        "role": "user",
-                        "content": (
-                            "Current diagnostic context JSON:\n"
-                            f"{context}\n\nUser message:\n{user_message}"
-                        ),
-                    }
-                )
-                try:
-                    response = router.chat(chat_messages)
-                except Exception as e:
-                    console.print(f"[red]LLM chat failed:[/red] {e}")
-                    chat_messages.pop()
-                    continue
-                chat_messages.append({"role": "assistant", "content": response})
-                console.print(Panel(response, title=f"LLM ({provider})", border_style="cyan"))
-            elif cmd == "reset-chat":
-                chat_messages = chat_messages[:1]
-                console.print("[green]LLM chat history cleared.[/green]")
-            elif cmd.startswith("repo "):
-                new_path = cmd[5:].strip()
-                try:
-                    current_doc.repo = RepoScanner().scan(new_path)
-                    console.print(f"[green]Rescanned: {new_path}[/green]")
-                except OSError as e:
-                    console.print(f"[red]Error:[/red] {e}")
-            else:
-                console.print(f"[red]Unknown command:[/red] :{cmd}")
-        else:
-            trace_info = trace_from_text(prompt)
-            current_doc.trace = trace_info
-            _display_context(current_doc)
 
 
 def _display_context(doc: ContextDocument):

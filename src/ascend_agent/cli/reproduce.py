@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import sys
 
 from typing import Optional
 
@@ -12,6 +10,7 @@ from rich.console import Console
 from ascend_agent.config import settings
 from ascend_agent.diagnosis.models import DiagnosisOutput, ReproductionResult
 from ascend_agent.diagnosis.router import create_router
+from ascend_agent.cli.io import load_model_json, write_model_json
 from ascend_agent.reproduction.engine import ReproductionEngine
 
 console = Console()
@@ -32,16 +31,9 @@ def reproduce_run(
     results as JSON for Phase 5 verification.
     """
     try:
-        with open(diagnosis) as f:
-            data = f.read()
-    except (FileNotFoundError, json.JSONDecodeError) as e:
-        console.print(f"[red]Error:[/red] Failed to read diagnosis JSON: {e}")
-        raise typer.Exit(code=1)
-
-    try:
-        diagnosis_output = DiagnosisOutput.model_validate_json(data)
-    except Exception as e:
-        console.print(f"[red]Error:[/red] Failed to parse diagnosis JSON: {e}")
+        diagnosis_output = load_model_json(DiagnosisOutput, diagnosis, label="diagnosis")
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=1)
 
     repo_path = diagnosis_output.context_doc.repo.path
@@ -77,6 +69,5 @@ def reproduce_run(
         console.print(f"\n[bold red]stderr:[/bold red]\n{result.stderr}")
 
     if output is not None:
-        with open(output, "w") as f:
-            f.write(result.model_dump_json(indent=2))
+        write_model_json(result, output)
         console.print(f"[green]Saved reproduction result to {output}[/green]")
