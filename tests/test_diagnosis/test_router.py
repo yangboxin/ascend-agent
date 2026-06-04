@@ -88,7 +88,7 @@ def test_create_router_non_openai_missing_key(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("ASCEND_DEEPSEEK_API_KEY", raising=False)
     monkeypatch.setattr(
-        "ascend_agent.cli.config_manager.ConfigManager.get_provider",
+        "ascend_agent.providers.config_manager.ConfigManager.get_provider",
         lambda self, name: None,
     )
     from ascend_agent.diagnosis.router import create_router
@@ -177,7 +177,7 @@ def test_create_router_deepseek_missing_key(monkeypatch):
     monkeypatch.delenv("ASCEND_DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(
-        "ascend_agent.cli.config_manager.ConfigManager.get_provider",
+        "ascend_agent.providers.config_manager.ConfigManager.get_provider",
         lambda self, name: None,
     )
     from ascend_agent.diagnosis.router import create_router
@@ -193,7 +193,7 @@ def test_create_router_qwen_missing_key(monkeypatch):
     monkeypatch.delenv("ASCEND_QWEN_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(
-        "ascend_agent.cli.config_manager.ConfigManager.get_provider",
+        "ascend_agent.providers.config_manager.ConfigManager.get_provider",
         lambda self, name: None,
     )
     from ascend_agent.diagnosis.router import create_router

@@ -5,7 +5,7 @@ from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 
-from ascend_agent.cli.config_manager import ConfigManager
+from ascend_agent.providers.config_manager import ConfigManager
 from ascend_agent.runtime import AgentLoop, QueryEngine, Session, ToolRegistry
 
 console = Console()

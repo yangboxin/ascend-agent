@@ -7,8 +7,8 @@ import typer
 from rich.console import Console
 from rich.panel import Panel
 
-from ascend_agent.cli.config_manager import CONFIG_FILE, ConfigManager, ProviderRecord
-from ascend_agent.cli.model_catalog import PROVIDER_PRESETS, full_model_id, split_model_id
+from ascend_agent.providers.config_manager import CONFIG_FILE, ConfigManager, ProviderRecord
+from ascend_agent.providers.catalog import PROVIDER_PRESETS, full_model_id, split_model_id
 
 models_app = typer.Typer(name="models", help="Configure LLM providers and models.")
 console = Console()

@@ -12,7 +12,7 @@ def _resolve_provider(provider: str | None) -> str:
     if provider:
         return provider
     try:
-        from ascend_agent.cli.config_manager import ConfigManager
+        from ascend_agent.providers.config_manager import ConfigManager
         return ConfigManager().get_active()
     except Exception:
         return "openai"

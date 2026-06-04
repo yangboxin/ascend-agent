@@ -9,7 +9,8 @@ import httpx
 from openai import APIConnectionError, APIStatusError, BadRequestError, OpenAI
 from pydantic import BaseModel, ConfigDict, Field
 
-from ascend_agent.cli.model_catalog import PROVIDER_PRESETS
+from ascend_agent.providers.catalog import PROVIDER_PRESETS
+from ascend_agent.providers.config_manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
@@ -196,14 +197,13 @@ def _resolve_provider_config(provider: str) -> tuple[str, str, str]:
     # Fill gaps from config file
     if not api_key or not base_url or not default_model:
         try:
-            from ascend_agent.cli.config_manager import ConfigManager
             pc = ConfigManager().get_provider(provider)
-            if pc:
-                api_key = api_key or pc.api_key or None
-                base_url = base_url or pc.base_url
-                default_model = default_model or pc.default_model
         except Exception:
-            pass
+            pc = None
+        if pc:
+            api_key = api_key or pc.api_key or None
+            base_url = base_url or pc.base_url
+            default_model = default_model or pc.default_model
 
     # Fall back to built-in defaults
     builtin = PROVIDER_DEFAULTS.get(provider, {})
