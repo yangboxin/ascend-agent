@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import shlex
+import sys
 from collections.abc import Sequence
-from typing import Any, Protocol
+from typing import Any, Protocol, TextIO
 
 from ascend_agent.config import Settings
 from ascend_agent.tools.code_search import search_code
@@ -28,10 +29,12 @@ class MCPToolClient:
         command: str,
         args: Sequence[str] | None = None,
         cwd: str | None = None,
+        errlog: TextIO | None = None,
     ):
         self._command = command
         self._args = list(args or [])
         self._cwd = cwd
+        self._errlog = errlog or sys.stderr
 
     async def search_code(self, pattern: str, path: str) -> str:
         payload = await self._call_tool(
@@ -48,7 +51,7 @@ class MCPToolClient:
             args=self._args,
             cwd=self._cwd,
         )
-        async with stdio_client(params) as (read_stream, write_stream):
+        async with stdio_client(params, errlog=self._errlog) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
                 result = await session.call_tool(name, arguments)
@@ -73,18 +76,32 @@ class MCPToolClient:
 class FallbackToolClient:
     """Try primary tool client first, then fallback client on failure."""
 
-    def __init__(self, primary: DiagnosisToolClient, fallback: DiagnosisToolClient):
+    def __init__(
+        self,
+        primary: DiagnosisToolClient,
+        fallback: DiagnosisToolClient,
+        errlog: TextIO | None = None,
+    ):
         self._primary = primary
         self._fallback = fallback
+        self._errlog = errlog
 
     async def search_code(self, pattern: str, path: str) -> str:
         try:
             return await self._primary.search_code(pattern, path)
-        except Exception:
+        except Exception as exc:
+            if self._errlog is not None:
+                self._errlog.write(
+                    f"MCP search failed for pattern {pattern!r}; "
+                    f"falling back to local search: {exc}\n"
+                )
             return await self._fallback.search_code(pattern, path)
 
 
-def create_tool_client(settings: Settings | None = None) -> DiagnosisToolClient:
+def create_tool_client(
+    settings: Settings | None = None,
+    errlog: TextIO | None = None,
+) -> DiagnosisToolClient:
     """Create the tool client used by diagnosis workflows.
 
     Behavior is controlled by `ASCEND_DIAGNOSIS_TOOL_BACKEND`:
@@ -94,6 +111,8 @@ def create_tool_client(settings: Settings | None = None) -> DiagnosisToolClient:
     """
     cfg = settings or Settings()
     backend = (cfg.diagnosis_tool_backend or "auto").strip().lower()
+    if backend not in {"auto", "local", "mcp"}:
+        raise ValueError("Diagnosis tool backend must be one of: auto, local, mcp")
     local_client = LocalToolClient()
     if backend == "local":
         return local_client
@@ -103,6 +122,8 @@ def create_tool_client(settings: Settings | None = None) -> DiagnosisToolClient:
         return local_client
 
     command = command_parts[0]
+    if command == "python":
+        command = sys.executable
     args = command_parts[1:]
-    mcp_client = MCPToolClient(command=command, args=args)
-    return FallbackToolClient(primary=mcp_client, fallback=local_client)
+    mcp_client = MCPToolClient(command=command, args=args, errlog=errlog)
+    return FallbackToolClient(primary=mcp_client, fallback=local_client, errlog=errlog)

@@ -5,11 +5,13 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 
 from ascend_agent.context.models import (
+    TraceBundle,
     TraceCause,
     TraceEntry,
     TraceErrorEvent,
     TraceInfo,
     TraceSignalCandidate,
+    TraceSource,
 )
 
 _frame_pattern = re.compile(
@@ -637,6 +639,35 @@ def trace_from_file(path: str | pathlib.Path) -> TraceInfo:
     return parse_stack_trace(text)
 
 
+def trace_bundle_from_files(paths: list[str | pathlib.Path]) -> TraceBundle:
+    sources = []
+    for path in paths:
+        resolved = pathlib.Path(path).resolve()
+        text = resolved.read_text(encoding="utf-8", errors="replace")
+        trace = parse_stack_trace(text)
+        sources.append(
+            TraceSource(
+                path=str(resolved),
+                label=resolved.name,
+                line_count=len(text.splitlines()),
+                trace=trace,
+            )
+        )
+    return _build_trace_bundle(sources)
+
+
+def trace_bundle_from_dir(path: str | pathlib.Path) -> TraceBundle:
+    resolved = pathlib.Path(path).resolve()
+    if not resolved.is_dir():
+        raise OSError(f"Trace directory does not exist or is not a directory: {resolved}")
+    files = [
+        candidate
+        for candidate in sorted(resolved.rglob("*"))
+        if candidate.is_file() and not any(part.startswith(".") for part in candidate.relative_to(resolved).parts)
+    ]
+    return trace_bundle_from_files(files)
+
+
 def trace_from_stdin() -> TraceInfo:
     text = sys.stdin.read()
     return parse_stack_trace(text)
@@ -644,3 +675,50 @@ def trace_from_stdin() -> TraceInfo:
 
 def trace_from_text(text: str) -> TraceInfo:
     return parse_stack_trace(text)
+
+
+def _build_trace_bundle(sources: list[TraceSource]) -> TraceBundle:
+    events: list[TraceErrorEvent] = []
+    frames: list[TraceEntry] = []
+    signal_candidates: list[TraceSignalCandidate] = []
+    runtime_signals: dict[str, str] = {}
+    parse_warnings: list[str] = []
+    raw_parts: list[str] = []
+
+    for source in sources:
+        trace = source.trace
+        raw_parts.append(f"--- Trace source: {source.path} ---\n{trace.raw_text}")
+        events.extend(trace.error_events)
+        frames.extend(trace.frames)
+        signal_candidates.extend(trace.signal_candidates)
+        runtime_signals.update(trace.runtime_signals)
+        parse_warnings.extend(f"{source.label}:{warning}" for warning in trace.parse_warnings)
+
+    best_source = max(
+        sources,
+        key=lambda source: max(
+            (event.confidence for event in source.trace.error_events),
+            default=0.0,
+        ),
+        default=None,
+    )
+    error_type = (best_source.trace.error_type if best_source else None) or next(
+        (source.trace.error_type for source in sources if source.trace.error_type),
+        None,
+    )
+    error_message = (best_source.trace.error_message if best_source else None) or next(
+        (source.trace.error_message for source in sources if source.trace.error_message),
+        None,
+    )
+
+    return TraceBundle(
+        sources=sources,
+        error_type=error_type,
+        error_message=error_message,
+        frames=frames,
+        runtime_signals=runtime_signals,
+        signal_candidates=signal_candidates,
+        error_events=events,
+        parse_warnings=parse_warnings,
+        raw_text="\n\n".join(raw_parts),
+    )

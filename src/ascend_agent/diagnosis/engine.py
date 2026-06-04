@@ -298,9 +298,22 @@ def _build_system_prompt() -> str:
 def _build_user_prompt(context_doc) -> str:
     """Format the user message from a ContextDocument."""
     trace = context_doc.trace
+    trace_bundle = getattr(context_doc, "trace_bundle", None)
     repo = context_doc.repo
 
     lines = []
+    if trace_bundle:
+        lines.append(f"Trace bundle sources: {len(trace_bundle.sources)}")
+        for source in trace_bundle.sources[:10]:
+            source_error = source.trace.error_type or "unknown"
+            source_message = source.trace.error_message or "unknown"
+            lines.append(
+                f"  - {source.path} ({source.line_count} lines): "
+                f"{source_error}: {source_message}"
+            )
+        if len(trace_bundle.sources) > 10:
+            lines.append(f"  ... {len(trace_bundle.sources) - 10} more trace sources")
+        lines.append("")
     if trace:
         lines.append(f"Error type: {trace.error_type or 'unknown'}")
         lines.append(f"Error message: {trace.error_message or 'unknown'}")

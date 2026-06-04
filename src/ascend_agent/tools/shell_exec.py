@@ -10,7 +10,12 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT = 60
 
 
-async def exec_shell(command: str, timeout: int = DEFAULT_TIMEOUT, ctx: Context | None = None) -> str:
+async def exec_shell(
+    command: str,
+    timeout: int = DEFAULT_TIMEOUT,
+    ctx: Context | None = None,
+    cwd: str | None = None,
+) -> str:
     """Execute a shell command locally or via SSH. Returns JSON with status, stdout, stderr, exit_code.
 
     Routes to _exec_remote if ASCEND_SSH_HOST env var is set, otherwise _exec_local.
@@ -19,16 +24,22 @@ async def exec_shell(command: str, timeout: int = DEFAULT_TIMEOUT, ctx: Context 
     if ssh_host:
         logger.info("Routing command to remote SSH host: %s", ssh_host)
         return await _exec_remote(command, timeout, ctx)
-    return await _exec_local(command, timeout, ctx)
+    return await _exec_local(command, timeout, ctx, cwd=cwd)
 
 
-async def _exec_local(command: str, timeout: int, ctx: Context | None = None) -> str:
+async def _exec_local(
+    command: str,
+    timeout: int,
+    ctx: Context | None = None,
+    cwd: str | None = None,
+) -> str:
     """Execute command via local subprocess (D-03, D-04)."""
     try:
         proc = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            cwd=cwd,
         )
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -49,6 +60,8 @@ async def _exec_local(command: str, timeout: int, ctx: Context | None = None) ->
         exit_code = proc.returncode if proc.returncode is not None else -1
 
         status = "success" if exit_code == 0 else "fail"
+        if exit_code == 127:
+            status = "error"
 
         if ctx is not None:
             await ctx.info(f"Local exec: exit_code={exit_code}, status={status}")

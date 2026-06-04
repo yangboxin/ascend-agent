@@ -26,6 +26,13 @@ def test_repo_info_schema(sample_repo_dir):
     assert result.language == "python"
 
 
+def test_repo_scanner_rejects_missing_path(tmp_path):
+    from ascend_agent.context.repo import RepoScanner
+
+    with pytest.raises(OSError, match="Repository path does not exist"):
+        RepoScanner().scan(tmp_path / "missing")
+
+
 def test_trace_parse_error_type(sample_trace):
     from ascend_agent.context.trace import parse_stack_trace
     result = parse_stack_trace(sample_trace)
@@ -56,3 +63,33 @@ def test_trace_text_arg(sample_trace):
     result = trace_from_text(sample_trace)
     assert result.error_type == "ValueError"
     assert len(result.frames) == 3
+
+
+def test_trace_bundle_from_files_preserves_sources(tmp_path):
+    from ascend_agent.context.trace import trace_bundle_from_files
+
+    first = tmp_path / "early.log"
+    second = tmp_path / "late.log"
+    first.write_text("INFO boot\n")
+    second.write_text("RuntimeError: later failure\n")
+
+    bundle = trace_bundle_from_files([first, second])
+
+    assert len(bundle.sources) == 2
+    assert bundle.sources[0].path == str(first.resolve())
+    assert bundle.error_type == "RuntimeError"
+    assert "Trace source" in bundle.raw_text
+
+
+def test_trace_bundle_from_dir_reads_sorted_files(tmp_path):
+    from ascend_agent.context.trace import trace_bundle_from_dir
+
+    logs = tmp_path / "logs"
+    logs.mkdir()
+    (logs / "b.log").write_text("ValueError: b\n")
+    (logs / "a.log").write_text("RuntimeError: a\n")
+
+    bundle = trace_bundle_from_dir(logs)
+
+    assert [source.label for source in bundle.sources] == ["a.log", "b.log"]
+    assert len(bundle.error_events) == 2

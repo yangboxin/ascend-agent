@@ -24,6 +24,19 @@ class Settings(BaseSettings):
     ssh_key_path: str = Field(default="", description="Path to SSH private key file (fallback if agent unavailable)")
     shell_timeout: int = Field(default=60, ge=1, description="Default timeout in seconds for shell commands")
     test_timeout: int = Field(default=300, ge=1, description="Default timeout in seconds for test execution")
+    agent_state_dir: str = Field(
+        default=".ascend-agent",
+        description="Relative directory for platform agent state and conversation history",
+    )
+    agent_tool_output_max_tokens: int = Field(
+        default=6000,
+        ge=0,
+        description="Maximum tokens retained from large tool outputs before eviction",
+    )
+    agent_skill_paths: str = Field(
+        default="",
+        description="Additional skill roots separated by os.pathsep",
+    )
 
     # Phase 6: Provider config fields
     openai_api_key: str = Field(

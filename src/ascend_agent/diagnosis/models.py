@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Evidence(BaseModel):
@@ -181,6 +181,39 @@ class VerificationResult(BaseModel):
     files_tested: list[str] = Field(default_factory=list, description="Repo-relative paths of test files that were executed")
     stdout: str = Field(default="", description="Raw test output (if parsing fails)")
 
+    @model_validator(mode="after")
+    def _derive_test_counts(self) -> "VerificationResult":
+        """Populate summary counters from per-test details when omitted."""
+        if self.tests and not any(
+            [self.tests_run, self.passed, self.failed, self.errors, self.skipped, self.xfailed, self.xpassed]
+        ):
+            counts: dict[str, int] = {}
+            for test in self.tests:
+                counts[test.outcome] = counts.get(test.outcome, 0) + 1
+            self.passed = counts.get("passed", 0)
+            self.failed = counts.get("failed", 0)
+            self.errors = counts.get("error", 0) + counts.get("errors", 0)
+            self.skipped = counts.get("skipped", 0)
+            self.xfailed = counts.get("xfailed", 0)
+            self.xpassed = counts.get("xpassed", 0)
+            self.tests_run = sum(counts.values())
+        return self
+
+
+class ReproductionAttempt(BaseModel):
+    """One command attempted during reproduction."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str = Field(description="Attempt type, e.g. existing_command or generated_bad_case")
+    command: str = Field(default="", description="Command that was executed")
+    repro_file: str = Field(default="", description="Repo-relative generated repro file, if any")
+    status: str = Field(default="", description="Raw execution status")
+    exit_code: int = Field(default=-1, description="Process exit code")
+    matched_error: bool = Field(default=False, description="Whether this attempt matched the original error")
+    matched_signal: str = Field(default="", description="The error signal matched in command output")
+    summary: str = Field(default="", description="Short human-readable attempt summary")
+
 
 class ReproductionResult(BaseModel):
     """Structured result from reproduction execution (D-11, D-12)."""
@@ -205,6 +238,22 @@ class ReproductionResult(BaseModel):
     files_changed: list[str] = Field(
         default_factory=list,
         description="List of repo-relative paths to files modified during reproduction",
+    )
+    reproduced: bool = Field(
+        default=False,
+        description="True when a failing command matched the original error signal",
+    )
+    repro_file: str = Field(
+        default="", description="Repo-relative generated bad-case file path, if any"
+    )
+    matched_error: bool = Field(
+        default=False, description="Whether output matched the original error signal"
+    )
+    matched_error_signal: str = Field(
+        default="", description="Error signal matched in stdout/stderr"
+    )
+    attempts: list[ReproductionAttempt] = Field(
+        default_factory=list, description="Executed reproduction attempts"
     )
 
 

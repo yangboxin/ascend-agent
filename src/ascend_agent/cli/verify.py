@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import sys
 
@@ -19,6 +20,11 @@ from ascend_agent.verification.engine import VerificationEngine
 
 console = Console()
 verify_app = typer.Typer(name="verify", help="Verify fixes by running relevant tests")
+
+
+@verify_app.callback()
+def verify_root():
+    """Verify fixes by running relevant tests."""
 
 
 @verify_app.command(name="run")
@@ -59,7 +65,8 @@ def verify_run(
 
     console.print("\n[bold cyan]Running verification...[/bold cyan]")
     try:
-        result = asyncio.run(engine.verify(reproduction_result))
+        verify_result = engine.verify(reproduction_result)
+        result = asyncio.run(verify_result) if inspect.isawaitable(verify_result) else verify_result
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=1)
