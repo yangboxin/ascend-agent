@@ -73,6 +73,41 @@ class TraceInfo(BaseModel):
     raw_text: str
 
 
+class TraceSource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    label: str = Field(default="")
+    line_count: int = Field(default=0, ge=0)
+    trace: TraceInfo
+
+
+class TraceBundle(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sources: list[TraceSource] = Field(default_factory=list)
+    error_type: str | None = Field(default=None)
+    error_message: str | None = Field(default=None)
+    frames: list[TraceEntry] = Field(default_factory=list)
+    runtime_signals: dict[str, str] = Field(default_factory=dict)
+    signal_candidates: list[TraceSignalCandidate] = Field(default_factory=list)
+    error_events: list[TraceErrorEvent] = Field(default_factory=list)
+    parse_warnings: list[str] = Field(default_factory=list)
+    raw_text: str = Field(default="")
+
+    def to_trace_info(self) -> TraceInfo:
+        return TraceInfo(
+            error_type=self.error_type,
+            error_message=self.error_message,
+            frames=self.frames,
+            runtime_signals=self.runtime_signals,
+            signal_candidates=self.signal_candidates,
+            error_events=self.error_events,
+            parse_warnings=self.parse_warnings,
+            raw_text=self.raw_text,
+        )
+
+
 class ContextDocument(BaseModel):
     """Top-level schema contract consumed by Phase 2 (Diagnosis Engine)."""
 
@@ -80,4 +115,5 @@ class ContextDocument(BaseModel):
 
     repo: RepoInfo | None = Field(default=None)
     trace: TraceInfo | None = Field(default=None)
+    trace_bundle: TraceBundle | None = Field(default=None)
     config_env: ConfigEnv = Field(default_factory=ConfigEnv)

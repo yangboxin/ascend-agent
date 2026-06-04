@@ -145,6 +145,189 @@ def test_cli_diagnose_integration(tmp_path, monkeypatch):
     assert "iterations used: 2" in result.stdout
 
 
+def test_cli_diagnose_captures_tool_logs_by_default(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+
+    (tmp_path / "test.py").write_text("x = 1\n")
+    mock_engine = Mock()
+    mock_engine.diagnose.return_value = Mock(hypotheses=[], errors=[], iterations_used=0)
+
+    import ascend_agent.cli.diagnose as diag_mod
+
+    monkeypatch.setattr(diag_mod, "Engine", lambda router, repo_path, **kwargs: mock_engine)
+    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
+
+    def fake_create_tool_client(*, settings=None, errlog=None):
+        assert errlog is not None
+        errlog.write("Starting Ascend Agent MCP server...\n")
+        return Mock(search_code=Mock())
+
+    monkeypatch.setattr(diag_mod, "create_tool_client", fake_create_tool_client)
+
+    result = runner.invoke(app, [
+        "diagnose", "run", str(tmp_path),
+        "--trace-text", "ValueError: test",
+    ])
+
+    assert result.exit_code == 0
+    assert "Starting Ascend Agent MCP server" not in result.stdout
+
+
+def test_cli_diagnose_can_show_tool_logs_and_select_backend(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+
+    (tmp_path / "test.py").write_text("x = 1\n")
+    mock_engine = Mock()
+    mock_engine.diagnose.return_value = Mock(hypotheses=[], errors=[], iterations_used=0)
+
+    import ascend_agent.cli.diagnose as diag_mod
+
+    monkeypatch.setattr(diag_mod, "Engine", lambda router, repo_path, **kwargs: mock_engine)
+    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
+
+    def fake_create_tool_client(*, settings=None, errlog=None):
+        assert settings.diagnosis_tool_backend == "local"
+        assert errlog is not None
+        errlog.write("captured tool log\n")
+        return Mock(search_code=Mock())
+
+    monkeypatch.setattr(diag_mod, "create_tool_client", fake_create_tool_client)
+
+    result = runner.invoke(app, [
+        "diagnose", "run", str(tmp_path),
+        "--trace-text", "ValueError: test",
+        "--tool-backend", "local",
+        "--show-tool-logs",
+    ])
+
+    assert result.exit_code == 0
+    assert "Tool Logs" in result.stdout
+    assert "captured tool log" in result.stdout
+
+
+def test_cli_diagnose_tool_logs_include_search_path(tmp_path, monkeypatch):
+    import asyncio
+    from unittest.mock import Mock
+
+    (tmp_path / "test.py").write_text("x = 1\n")
+
+    class FakeEngine:
+        def __init__(self, *, search_tool, **kwargs):
+            self.search_tool = search_tool
+
+        def diagnose(self, doc):
+            asyncio.run(self.search_tool("x", str(tmp_path)))
+            return Mock(hypotheses=[], errors=[], iterations_used=0)
+
+    class FakeToolClient:
+        async def search_code(self, pattern, path):
+            return f"{path}/test.py:1:x = 1"
+
+    import ascend_agent.cli.diagnose as diag_mod
+
+    monkeypatch.setattr(diag_mod, "Engine", FakeEngine)
+    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
+    monkeypatch.setattr(diag_mod, "create_tool_client", lambda **kwargs: FakeToolClient())
+
+    result = runner.invoke(app, [
+        "diagnose", "run", str(tmp_path),
+        "--trace-text", "ValueError: test",
+        "--show-tool-logs",
+    ])
+
+    assert result.exit_code == 0
+    assert "code_search pattern='x'" in result.stdout
+    assert tmp_path.name in result.stdout
+    assert "test.py:1:x = 1" in result.stdout
+
+
+def test_cli_diagnose_accepts_repeated_trace_files(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+
+    (tmp_path / "test.py").write_text("x = 1\n")
+    first = tmp_path / "early.log"
+    second = tmp_path / "late.log"
+    first.write_text("INFO boot\n")
+    second.write_text("RuntimeError: later failure\n")
+
+    captured = {}
+
+    class FakeEngine:
+        def __init__(self, **kwargs):
+            pass
+
+        def diagnose(self, doc):
+            captured["doc"] = doc
+            return Mock(hypotheses=[], errors=[], iterations_used=0)
+
+    import ascend_agent.cli.diagnose as diag_mod
+
+    monkeypatch.setattr(diag_mod, "Engine", FakeEngine)
+    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
+    monkeypatch.setattr(diag_mod, "create_tool_client", lambda **kwargs: Mock(search_code=Mock()))
+
+    result = runner.invoke(app, [
+        "diagnose", "run", str(tmp_path),
+        "--trace", str(first),
+        "--trace", str(second),
+    ])
+
+    assert result.exit_code == 0
+    assert captured["doc"].trace_bundle is not None
+    assert len(captured["doc"].trace_bundle.sources) == 2
+    assert captured["doc"].trace.error_type == "RuntimeError"
+    assert "Trace Bundle" in result.stdout
+
+
+def test_cli_diagnose_accepts_trace_dir(tmp_path, monkeypatch):
+    from unittest.mock import Mock
+
+    (tmp_path / "test.py").write_text("x = 1\n")
+    trace_dir = tmp_path / "logs"
+    trace_dir.mkdir()
+    (trace_dir / "worker.log").write_text("ValueError: worker failed\n")
+
+    captured = {}
+
+    class FakeEngine:
+        def __init__(self, **kwargs):
+            pass
+
+        def diagnose(self, doc):
+            captured["doc"] = doc
+            return Mock(hypotheses=[], errors=[], iterations_used=0)
+
+    import ascend_agent.cli.diagnose as diag_mod
+
+    monkeypatch.setattr(diag_mod, "Engine", FakeEngine)
+    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
+    monkeypatch.setattr(diag_mod, "create_tool_client", lambda **kwargs: Mock(search_code=Mock()))
+
+    result = runner.invoke(app, [
+        "diagnose", "run", str(tmp_path),
+        "--trace-dir", str(trace_dir),
+    ])
+
+    assert result.exit_code == 0
+    assert captured["doc"].trace_bundle.sources[0].label == "worker.log"
+    assert captured["doc"].trace.error_type == "ValueError"
+
+
+def test_cli_diagnose_rejects_conflicting_trace_inputs(tmp_path):
+    (tmp_path / "test.py").write_text("x = 1\n")
+    trace_file = tmp_path / "error.log"
+    trace_file.write_text("ValueError: file\n")
+
+    result = runner.invoke(app, [
+        "diagnose", "run", str(tmp_path),
+        "--trace", str(trace_file),
+        "--trace-text", "ValueError: text",
+    ])
+
+    assert result.exit_code == 1
+    assert "Use only one trace input method" in result.stdout
+
+
 # ---------------------------------------------------------------------------
 # Fix CLI tests
 # ---------------------------------------------------------------------------

@@ -111,6 +111,8 @@ def create_tool_client(
     """
     cfg = settings or Settings()
     backend = (cfg.diagnosis_tool_backend or "auto").strip().lower()
+    if backend not in {"auto", "local", "mcp"}:
+        raise ValueError("Diagnosis tool backend must be one of: auto, local, mcp")
     local_client = LocalToolClient()
     if backend == "local":
         return local_client

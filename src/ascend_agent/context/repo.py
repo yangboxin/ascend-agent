@@ -7,6 +7,8 @@ class RepoScanner:
 
     def scan(self, path: str | pathlib.Path) -> RepoInfo:
         resolved = pathlib.Path(path).resolve()
+        if not resolved.is_dir():
+            raise OSError(f"Repository path does not exist or is not a directory: {resolved}")
         root = resolved
 
         gitignore_patterns = self._load_gitignore(root)

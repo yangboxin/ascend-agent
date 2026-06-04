@@ -36,6 +36,7 @@ from prompt_toolkit import Application
 from prompt_toolkit.application.current import get_app
 from prompt_toolkit.buffer import Buffer
 from prompt_toolkit.completion import Completer, Completion, CompleteEvent, PathCompleter
+from prompt_toolkit.data_structures import Point
 from prompt_toolkit.document import Document
 from prompt_toolkit.filters import Condition
 from prompt_toolkit.key_binding import KeyBindings
@@ -81,6 +82,7 @@ SLASH_COMMANDS: tuple[tuple[str, str], ...] = (
     ("/models status", "Show active model and credential hints"),
     ("/models use ", "Select a model by provider/model"),
     ("/diagnose ", "Diagnose a repo: /diagnose <repo> --trace-text '...'"),
+    ("/diagnose run ", "Diagnose a repo using CLI-style syntax"),
     ("/fix", "Generate fixes from the last diagnosis"),
     ("/fix apply", "Apply generated fixes"),
     ("/reproduce", "Reproduce the last diagnosis"),
@@ -132,17 +134,18 @@ class SlashCommandCompleter(Completer):
         first, remainder = text.split(" ", 1)
         prefix = f"{first} {remainder}"
         matched_command = False
-        for command, description in SLASH_COMMANDS:
-            if command.startswith(prefix) and command != prefix:
-                matched_command = True
-                yield Completion(
-                    command,
-                    start_position=-len(prefix),
-                    display=command,
-                    display_meta=description,
-                )
-        if matched_command:
-            return
+        if not text.endswith(" "):
+            for command, description in SLASH_COMMANDS:
+                if command.startswith(prefix) and command != prefix:
+                    matched_command = True
+                    yield Completion(
+                        command,
+                        start_position=-len(prefix),
+                        display=command,
+                        display_meta=description,
+                    )
+            if matched_command:
+                return
 
         yield from self._path_completions(text)
 
@@ -245,6 +248,9 @@ class AscendTUI:
         self._last_verification: VerificationResult | None = None
         self._working_message_id: str | None = None
         self._task_running = False
+        self._content_cursor_line = 0
+        self._content_line_count = 1
+        self._content_auto_scroll = True
 
         # --- Hooks / Managers ---
         self._history = CommandHistory(history_file=history_file)
@@ -294,6 +300,8 @@ class AscendTUI:
         self._messages.append(message)
         if len(self._messages) > self._max_messages:
             self._messages = self._messages[-self._max_messages:]
+        if self._content_auto_scroll:
+            self._scroll_content_to_bottom()
         self._invalidate()
 
     def add_user_message(self, text: str) -> None:
@@ -310,6 +318,8 @@ class AscendTUI:
             self._messages[-1].content += chunk
         else:
             self._messages.append(Message(role="assistant", content=chunk))
+        if self._content_auto_scroll:
+            self._scroll_content_to_bottom()
         self._invalidate()
 
     def update_last_assistant(self, content: str) -> None:
@@ -318,11 +328,15 @@ class AscendTUI:
             self._messages[-1].content = content
         else:
             self._messages.append(Message(role="assistant", content=content))
+        if self._content_auto_scroll:
+            self._scroll_content_to_bottom()
         self._invalidate()
 
     def clear_messages(self) -> None:
         """Clear all messages."""
         self._messages.clear()
+        self._content_auto_scroll = True
+        self._scroll_content_to_bottom()
         self._invalidate()
 
     def set_status(self, provider: str = "", model: str = "",
@@ -397,7 +411,7 @@ class AscendTUI:
             if self._model_picker_active:
                 return FormattedText(self._render_model_picker())
             if not self._messages:
-                return FormattedText([
+                text = FormattedText([
                     ("class:content", ""),
                     ("fg:#586e75", ""),
                     ("fg:#839496", "Welcome to Ascend Agent TUI.\n"),
@@ -406,13 +420,18 @@ class AscendTUI:
                     ("fg:#657b83 dim", "Enter send  Ctrl+J newline  Ctrl+C interrupt  Ctrl+D quit.\n"),
                     ("", ""),
                 ])
-            return format_messages(self._messages)
+                self._update_content_line_count(text)
+                return text
+            text = format_messages(self._messages)
+            self._update_content_line_count(text)
+            return text
 
         # --- Layout ---
         content_window = Window(
             content=FormattedTextControl(
                 text=lambda: get_content_text(),
-                focusable=False,
+                focusable=True,
+                get_cursor_position=lambda: Point(0, self._content_cursor_line),
             ),
             wrap_lines=True,
             allow_scroll_beyond_bottom=True,
@@ -515,15 +534,48 @@ class AscendTUI:
             if complete_state and complete_state.current_completion:
                 self._apply_completion(complete_state.current_completion)
                 return
+            if self._input_buffer.text.startswith("/") and "\n" not in self._input_buffer.text:
+                state = self._refresh_slash_completions(select_first=True)
+                if state and state.current_completion:
+                    self._apply_completion(state.current_completion)
+                    return
+                if state and state.completions:
+                    self._apply_completion(state.completions[0])
+                    return
             try:
                 self._input_buffer.start_completion(select_first=True)
+                complete_state = self._input_buffer.complete_state
+                if complete_state and complete_state.current_completion:
+                    self._apply_completion(complete_state.current_completion)
             except RuntimeError:
-                self._refresh_slash_completions(select_first=True)
+                state = self._refresh_slash_completions(select_first=True)
+                if state and state.current_completion:
+                    self._apply_completion(state.current_completion)
 
         @kb.add(Keys.ControlL)
         def _clear_screen(event):
             """Ctrl+L: clear messages."""
             self.clear_messages()
+
+        @kb.add(Keys.PageUp)
+        def _page_up(event):
+            """PageUp: scroll content up."""
+            self._scroll_content(-self._content_page_size())
+
+        @kb.add(Keys.PageDown)
+        def _page_down(event):
+            """PageDown: scroll content down."""
+            self._scroll_content(self._content_page_size())
+
+        @kb.add(Keys.Home)
+        def _home(event):
+            """Home: jump to the top of content."""
+            self._scroll_content_to_top()
+
+        @kb.add(Keys.End)
+        def _end(event):
+            """End: jump to the bottom of content."""
+            self._scroll_content_to_bottom()
 
         @kb.add("/", eager=True)
         def _slash(event):
@@ -632,7 +684,7 @@ class AscendTUI:
                 "  /models                    Open model selector\n"
                 "  /models list|status        Show model information\n"
                 "  /models use <provider/model>\n"
-                "  /diagnose <repo> [--trace file | --trace-text 'text'] [--output file]\n"
+                "  /diagnose [run] <repo> [--trace file ... | --trace-dir dir | --trace-text 'text'] [--output file]\n"
                 "  /fix [diagnosis.json] [--output file]\n"
                 "  /fix apply [--output file]\n"
                 "  /reproduce [diagnosis.json] [--output file]\n"
@@ -696,13 +748,15 @@ class AscendTUI:
             self._show_working_message()
 
             def run_callback() -> None:
-                try:
-                    self._on_user_input_callback(text)
-                except Exception as exc:
+                captured, exc = self._capture_background_output(
+                    lambda: self._on_user_input_callback(text)
+                )
+                if exc is not None:
                     self.add_message(Message(role="system", content=f"[red]Error:[/red] {exc}"))
-                finally:
-                    self._clear_working_message()
-                    self.set_status(streaming=False)
+                if captured:
+                    self.add_message(Message(role="system", content=f"Command output:\n{captured}"))
+                self._clear_working_message()
+                self.set_status(streaming=False)
 
             self.set_status(streaming=True)
             threading.Thread(target=run_callback, daemon=True).start()
@@ -750,6 +804,43 @@ class AscendTUI:
             except Exception:
                 pass
 
+    def _update_content_line_count(self, formatted_text: FormattedText) -> None:
+        text = "".join(fragment[1] for fragment in formatted_text if len(fragment) >= 2)
+        self._content_line_count = max(1, text.count("\n") + 1)
+        if self._content_auto_scroll:
+            self._content_cursor_line = self._content_line_count - 1
+        else:
+            self._content_cursor_line = max(
+                0,
+                min(self._content_cursor_line, self._content_line_count - 1),
+            )
+
+    def _content_page_size(self) -> int:
+        if self._app and self._app.output:
+            rows = self._app.output.get_size().rows
+            return max(1, rows - 6)
+        return 20
+
+    def _scroll_content(self, delta: int) -> None:
+        self._content_auto_scroll = False
+        self._content_cursor_line = max(
+            0,
+            min(self._content_cursor_line + delta, self._content_line_count - 1),
+        )
+        if self._content_cursor_line >= self._content_line_count - 1:
+            self._content_auto_scroll = True
+        self._invalidate()
+
+    def _scroll_content_to_top(self) -> None:
+        self._content_auto_scroll = False
+        self._content_cursor_line = 0
+        self._invalidate()
+
+    def _scroll_content_to_bottom(self) -> None:
+        self._content_auto_scroll = True
+        self._content_cursor_line = max(0, self._content_line_count - 1)
+        self._invalidate()
+
     # ==================================================================
     # Callbacks
     # ==================================================================
@@ -775,15 +866,15 @@ class AscendTUI:
             and self._input_buffer.text.startswith("/")
         )
 
-    def _refresh_slash_completions(self, *, select_first: bool = False) -> None:
+    def _refresh_slash_completions(self, *, select_first: bool = False):
         """Refresh slash completions without selecting or inserting a candidate."""
         if not hasattr(self, "_input_buffer"):
-            return
+            return None
         text = self._input_buffer.text
         if not text.startswith("/") or "\n" in text:
             if self._input_buffer.complete_state:
                 self._input_buffer.cancel_completion()
-            return
+            return None
 
         completions = list(
             SlashCommandCompleter().get_completions(
@@ -795,8 +886,10 @@ class AscendTUI:
             state = self._input_buffer._set_completions(completions)
             if select_first and state.completions:
                 state.go_to_index(0)
+            return state
         elif self._input_buffer.complete_state:
             self._input_buffer.cancel_completion()
+        return None
 
     def _apply_completion(self, completion: Completion) -> None:
         """Apply a completion without immediately reopening completions."""
@@ -816,7 +909,15 @@ class AscendTUI:
             if token.startswith("--"):
                 key = token[2:].replace("-", "_")
                 if i + 1 < len(args) and not args[i + 1].startswith("--"):
-                    parsed[key] = args[i + 1]
+                    value = args[i + 1]
+                    if key in parsed:
+                        existing = parsed[key]
+                        if isinstance(existing, list):
+                            existing.append(value)
+                        else:
+                            parsed[key] = [existing, value]
+                    else:
+                        parsed[key] = value
                     i += 2
                 else:
                     parsed[key] = True
@@ -840,47 +941,60 @@ class AscendTUI:
         self.set_status(streaming=True)
 
         def run_task() -> None:
-            stdout = io.StringIO()
-            stderr = io.StringIO()
-            logs = io.StringIO()
-            log_handler = logging.StreamHandler(logs)
-            log_handler.setLevel(logging.WARNING)
-            log_handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
-            root_logger = logging.getLogger()
-            root_logger.addHandler(log_handler)
-            redirected_handlers: list[tuple[logging.StreamHandler, object]] = []
-            for logger_name in ("", "ascend_agent"):
-                logger = logging.getLogger(logger_name)
-                for handler in logger.handlers:
-                    if not isinstance(handler, logging.StreamHandler) or handler is log_handler:
-                        continue
-                    stream = getattr(handler, "stream", None)
-                    if stream in (sys.stderr, sys.__stderr__, sys.stdout, sys.__stdout__):
-                        redirected_handlers.append((handler, stream))
-                        handler.setStream(stderr)
-            try:
-                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
-                    func()
-            except Exception as exc:
+            captured, exc = self._capture_background_output(func)
+            if exc is not None:
                 self.add_message(Message(role="system", content=f"Error: {exc}"))
-            finally:
-                for handler, stream in redirected_handlers:
-                    handler.setStream(stream)
-                root_logger.removeHandler(log_handler)
-                captured = "\n".join(
-                    item.strip()
-                    for item in (stdout.getvalue(), stderr.getvalue(), logs.getvalue())
-                    if item.strip()
-                )
-                if captured:
-                    if len(captured) > 4000:
-                        captured = captured[-4000:]
-                        captured = "[truncated]\n" + captured
-                    self.add_message(Message(role="system", content=f"Command output:\n{captured}"))
-                self._task_running = False
-                self.set_status(streaming=False)
+            if captured:
+                self.add_message(Message(role="system", content=f"Command output:\n{captured}"))
+            self._task_running = False
+            self.set_status(streaming=False)
 
         threading.Thread(target=run_task, daemon=True).start()
+
+    def _capture_background_output(self, func: Callable[[], None]) -> tuple[str, Exception | None]:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        logs = io.StringIO()
+        log_handler = logging.StreamHandler(logs)
+        log_handler.setLevel(logging.WARNING)
+        log_handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+        root_logger = logging.getLogger()
+        root_logger.addHandler(log_handler)
+        redirected_handlers: list[tuple[logging.StreamHandler, object]] = []
+        for logger in self._iter_loggers():
+            for handler in logger.handlers:
+                if not isinstance(handler, logging.StreamHandler) or handler is log_handler:
+                    continue
+                stream = getattr(handler, "stream", None)
+                if stream in (sys.stderr, sys.__stderr__, sys.stdout, sys.__stdout__):
+                    redirected_handlers.append((handler, stream))
+                    handler.setStream(stderr)
+
+        exc: Exception | None = None
+        try:
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                func()
+        except Exception as caught:
+            exc = caught
+        finally:
+            for handler, stream in redirected_handlers:
+                handler.setStream(stream)
+            root_logger.removeHandler(log_handler)
+
+        captured = "\n".join(
+            item.strip()
+            for item in (stdout.getvalue(), stderr.getvalue(), logs.getvalue())
+            if item.strip()
+        )
+        if len(captured) > 4000:
+            captured = "[truncated]\n" + captured[-4000:]
+        return captured, exc
+
+    def _iter_loggers(self):
+        yield logging.getLogger()
+        for logger in logging.Logger.manager.loggerDict.values():
+            if isinstance(logger, logging.Logger):
+                yield logger
 
     def _active_provider(self) -> str:
         if self._provider:
@@ -1012,10 +1126,12 @@ class AscendTUI:
     def _run_diagnose_command(self, args: list[str]) -> None:
         parsed = self._parse_args(args)
         positionals = parsed["_"]
+        if isinstance(positionals, list) and positionals and positionals[0] == "run":
+            positionals = positionals[1:]
         if not isinstance(positionals, list) or not positionals:
             self.add_message(Message(
                 role="system",
-                content="Usage: /diagnose <repo> [--trace file | --trace-text 'text'] [--output file]",
+                content="Usage: /diagnose [run] <repo> [--trace file ... | --trace-dir dir | --trace-text 'text'] [--output file]",
             ))
             return
 
@@ -1024,7 +1140,7 @@ class AscendTUI:
             from ascend_agent.config import settings
             from ascend_agent.context.models import ConfigEnv, ContextDocument
             from ascend_agent.context.repo import RepoScanner
-            from ascend_agent.context.trace import trace_from_file, trace_from_text
+            from ascend_agent.context.trace import trace_bundle_from_dir, trace_bundle_from_files, trace_from_file, trace_from_text
             from ascend_agent.diagnosis.engine import Engine
             from ascend_agent.diagnosis.router import create_router
             from ascend_agent.diagnosis.tool_client import create_tool_client
@@ -1032,18 +1148,30 @@ class AscendTUI:
             repo = str(positionals[0])
             trace_text = parsed.get("trace_text")
             trace_path = parsed.get("trace")
+            trace_dir = parsed.get("trace_dir")
+            explicit_trace_inputs = sum(bool(value) for value in (trace_path, trace_dir, trace_text))
+            if explicit_trace_inputs > 1:
+                raise ValueError("Use only one trace input method: --trace, --trace-dir, or --trace-text")
             if not trace_text and not trace_path and len(positionals) > 1:
                 trace_text = " ".join(str(item) for item in positionals[1:])
             self.add_message(Message(role="system", content="Building context..."))
             repo_info = RepoScanner().scan(repo)
             trace_info = None
-            if isinstance(trace_path, str):
+            trace_bundle = None
+            if isinstance(trace_dir, str):
+                trace_bundle = trace_bundle_from_dir(trace_dir)
+                trace_info = trace_bundle.to_trace_info()
+            elif isinstance(trace_path, list):
+                trace_bundle = trace_bundle_from_files([str(item) for item in trace_path])
+                trace_info = trace_bundle.to_trace_info()
+            elif isinstance(trace_path, str):
                 trace_info = trace_from_file(trace_path)
             elif isinstance(trace_text, str):
                 trace_info = trace_from_text(trace_text)
             doc = ContextDocument(
                 repo=repo_info,
                 trace=trace_info,
+                trace_bundle=trace_bundle,
                 config_env=ConfigEnv(
                     python_version=settings.python_version,
                     platform=settings.platform,

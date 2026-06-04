@@ -12,9 +12,15 @@ from rich.syntax import Syntax
 from rich.table import Table
 
 from ascend_agent.config import settings
+from ascend_agent.config import Settings
 from ascend_agent.context.models import ConfigEnv, ContextDocument
 from ascend_agent.context.repo import RepoScanner
-from ascend_agent.context.trace import trace_from_file, trace_from_stdin, trace_from_text
+from ascend_agent.context.trace import (
+    trace_bundle_from_dir,
+    trace_bundle_from_files,
+    trace_from_stdin,
+    trace_from_text,
+)
 from ascend_agent.diagnosis.engine import Engine
 from ascend_agent.diagnosis.models import DiagnosisOutput, DiagnosisResult, Hypothesis, Evidence, PartialFailure
 from ascend_agent.diagnosis.router import create_router
@@ -44,15 +50,19 @@ def render_diagnosis(result: DiagnosisResult, width: int = 120) -> str:
 def diagnose_run(
     ctx: typer.Context,
     repo: str = typer.Argument(..., help="Path to local repository"),
-    trace: Optional[str] = typer.Option(None, "--trace", help="Path to trace/log file"),
+    trace: Optional[list[str]] = typer.Option(None, "--trace", help="Path to trace/log file (repeatable)"),
+    trace_dir: Optional[str] = typer.Option(None, "--trace-dir", help="Directory containing trace/log files"),
     trace_text: Optional[str] = typer.Option(None, "--trace-text", help="Inline pasted trace text"),
     output: Optional[str] = typer.Option(None, "--output", help="Path to write context as JSON"),
     interactive: bool = typer.Option(False, "--interactive", "-i", help="Start interactive REPL mode"),
     provider: Optional[str] = typer.Option(None, "--provider", help="LLM provider (overrides root --provider)"),
+    tool_backend: Optional[str] = typer.Option(None, "--tool-backend", help="Diagnosis tool backend: auto|local|mcp"),
+    show_tool_logs: bool = typer.Option(False, "--show-tool-logs", help="Show captured MCP/tool logs"),
 ):
     """Analyze a stack trace against a code repository.
 
-    Provide the trace as a file (--trace), inline text (--trace-text), or pipe via stdin.
+    Provide the trace as file(s) (--trace), a directory (--trace-dir),
+    inline text (--trace-text), or pipe via stdin.
     The repository path is required and must be a local directory.
     """
     resolved_provider = provider or (ctx.obj.get("provider", "openai") if ctx.obj else "openai")
@@ -61,15 +71,18 @@ def diagnose_run(
         _repl_mode(repo, resolved_provider)
         return
 
-    _one_shot_mode(repo, trace, trace_text, output, resolved_provider)
+    _one_shot_mode(repo, trace, trace_dir, trace_text, output, resolved_provider, tool_backend, show_tool_logs)
 
 
 def _one_shot_mode(
     repo: str,
-    trace_path: str | None,
+    trace_paths: list[str] | None,
+    trace_dir: str | None,
     trace_text_arg: str | None,
     output_path: str | None,
     provider: str = "openai",
+    tool_backend: str | None = None,
+    show_tool_logs: bool = False,
 ):
     console.print("[bold]Ascend Diagnostic Agent[/bold]")
     console.print("[cyan]Building context...[/cyan]")
@@ -80,9 +93,26 @@ def _one_shot_mode(
         console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=1)
 
+    explicit_trace_inputs = sum(
+        bool(value)
+        for value in (trace_paths, trace_dir, trace_text_arg)
+    )
+    if explicit_trace_inputs > 1:
+        console.print("[red]Error:[/red] Use only one trace input method: --trace, --trace-dir, or --trace-text")
+        raise typer.Exit(code=1)
+
     trace_info = None
-    if trace_path is not None:
-        trace_info = trace_from_file(trace_path)
+    trace_bundle = None
+    if trace_dir is not None:
+        trace_bundle = trace_bundle_from_dir(trace_dir)
+        trace_info = trace_bundle.to_trace_info()
+    elif trace_paths:
+        if len(trace_paths) == 1:
+            trace_bundle = trace_bundle_from_files(trace_paths)
+            trace_info = trace_bundle.sources[0].trace
+        else:
+            trace_bundle = trace_bundle_from_files(trace_paths)
+            trace_info = trace_bundle.to_trace_info()
     elif trace_text_arg is not None:
         trace_info = trace_from_text(trace_text_arg)
     elif not sys.stdin.isatty():
@@ -93,20 +123,42 @@ def _one_shot_mode(
         platform=settings.platform,
         env_vars=settings.env_vars,
     )
-    doc = ContextDocument(repo=repo_info, trace=trace_info, config_env=config_env)
+    doc = ContextDocument(
+        repo=repo_info,
+        trace=trace_info,
+        trace_bundle=trace_bundle,
+        config_env=config_env,
+    )
 
     _display_context(doc)
 
     console.print("\n[bold cyan]Running diagnosis...[/bold cyan]")
     try:
         router = create_router(provider=provider)
-        tool_client = create_tool_client()
+        tool_log = io.StringIO()
+        tool_settings = None
+        if tool_backend is not None:
+            tool_settings = Settings(diagnosis_tool_backend=tool_backend)
+        tool_client = create_tool_client(settings=tool_settings, errlog=tool_log)
+
+        async def search_code_with_log(pattern: str, path: str) -> str:
+            tool_log.write(f"code_search pattern={pattern!r} path={path}\n")
+            result_text = await tool_client.search_code(pattern, path)
+            first_line = result_text.splitlines()[0] if result_text else ""
+            if first_line:
+                tool_log.write(f"code_search result={first_line[:300]}\n")
+            return result_text
+
         engine = Engine(
             router=router,
             repo_path=repo,
-            search_tool=tool_client.search_code,
+            search_tool=search_code_with_log,
         )
         result = engine.diagnose(doc)
+        if show_tool_logs:
+            captured_tool_log = tool_log.getvalue().strip()
+            if captured_tool_log:
+                console.print(Panel(captured_tool_log, title="Tool Logs", border_style="dim"))
         _display_diagnosis(result)
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
@@ -223,6 +275,22 @@ def _display_context(doc: ContextDocument, target_console: Console | None = None
         if len(doc.repo.structure) > 10:
             structure_preview += ", ..."
         table.add_row("Structure", structure_preview)
+        out.print(table)
+
+    if doc.trace_bundle:
+        table = Table(title="Trace Bundle")
+        table.add_column("Source", style="cyan")
+        table.add_column("Lines", style="green")
+        table.add_column("Primary Error", style="yellow")
+        for source in doc.trace_bundle.sources[:10]:
+            trace = source.trace
+            table.add_row(
+                source.path,
+                str(source.line_count),
+                f"{trace.error_type or 'unknown'}: {trace.error_message or 'unknown'}",
+            )
+        if len(doc.trace_bundle.sources) > 10:
+            table.add_row(f"... {len(doc.trace_bundle.sources) - 10} more", "", "")
         out.print(table)
 
     if doc.trace:

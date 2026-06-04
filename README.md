@@ -20,6 +20,12 @@ ascend-agent diagnose run /path/to/repo --trace-text "ValueError: test"
 # Or via a trace file
 ascend-agent diagnose run /path/to/repo --trace /path/to/trace.log
 
+# Multiple log files
+ascend-agent diagnose run /path/to/repo --trace early.log --trace late.log
+
+# Directory of trace/log files
+ascend-agent diagnose run /path/to/repo --trace-dir /path/to/logs
+
 # Or pipe stdin
 echo "ZeroDivisionError: division by zero" | ascend-agent diagnose run /path/to/repo
 
@@ -43,11 +49,13 @@ This installs the `asd` and `ascend-agent` CLI commands. Run `asd` from a termin
 
 ### diagnose — Analyze a stack trace against a code repository
 
-The `diagnose run` command accepts a repository path (required) and a stack trace via one of three input methods:
+The `diagnose run` command accepts a repository path (required) and a stack trace via file, repeated files, directory, inline text, or stdin:
 
 | Method | Flag | Example |
 |--------|------|---------|
 | File path | `--trace` | `--trace /var/log/error.log` |
+| Multiple files | repeat `--trace` | `--trace early.log --trace late.log` |
+| Directory | `--trace-dir` | `--trace-dir /var/log/job-123` |
 | Inline text | `--trace-text` | `--trace-text "ValueError: oops"` |
 | stdin pipe | _(auto-detected)_ | `echo "Error" \| ascend-agent diagnose ...` |
 
@@ -158,7 +166,7 @@ ascend-agent/
 │       ├── context/
 │       │   ├── models.py          # Pydantic models (ContextDocument, RepoInfo, TraceInfo)
 │       │   ├── repo.py            # RepoScanner (.gitignore-aware)
-│       │   └── trace.py           # TraceParser (regex, 3 input methods)
+│       │   └── trace.py           # TraceParser (regex, file/text/stdin/trace bundle inputs)
 │       ├── diagnosis/
 │       │   ├── models.py          # All Pydantic models (Evidence, Hypothesis, FixSuggestion, ...)
 │       │   ├── router.py          # ModelRouter, create_router, ProviderConfig
@@ -222,7 +230,7 @@ The agent uses a layered architecture:
 
 Key design decisions:
 - **CLI and MCP server are separate processes** — the CLI launches the agent workflow; the MCP server runs as a subprocess providing tools to the orchestrator (Phase 2+)
-- **Three trace input methods** — file (`--trace`), stdin pipe, inline paste (`--trace-text`)
+- **Trace input methods** — file (`--trace`), repeated files, directory (`--trace-dir`), stdin pipe, inline paste (`--trace-text`)
 - **No caching** — fresh repo scan per invocation
 - **Context schema** — `ContextDocument` (Pydantic) with `repo_info + trace_info + config_env`
 

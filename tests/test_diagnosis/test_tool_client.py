@@ -98,6 +98,16 @@ def test_create_tool_client_auto_backend_wraps_mcp():
     assert isinstance(client, FallbackToolClient)
 
 
+def test_create_tool_client_rejects_unknown_backend():
+    settings = Settings(
+        diagnosis_tool_backend="unknown",
+        mcp_server_command="python -m ascend_agent.tools.server",
+    )
+
+    with pytest.raises(ValueError, match="Diagnosis tool backend"):
+        create_tool_client(settings=settings)
+
+
 def test_mcp_tool_client_passes_errlog(monkeypatch):
     captured = {}
     errlog = io.StringIO()

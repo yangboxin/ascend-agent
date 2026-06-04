@@ -540,6 +540,87 @@ class TestTUIAppConstruction:
 
         assert tui._input_buffer.text == "/diagnose repo --trace error.log"
 
+    def test_tab_auto_completes_path_without_open_menu(self, tmp_path, monkeypatch):
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        (tmp_path / "error.log").write_text("trace")
+        monkeypatch.chdir(tmp_path)
+        tui = AscendTUI(provider="test", model="test-model")
+        tui._build_app()
+        tui._input_buffer.text = "/diagnose repo --trace err"
+        tui._input_buffer.cursor_position = len(tui._input_buffer.text)
+
+        tab_binding = next(
+            binding
+            for binding in tui._app.key_bindings.bindings
+            if any(str(key) in ("tab", "Keys.Tab", "Keys.ControlI") for key in binding.keys)
+        )
+        tab_binding.handler(None)
+
+        assert tui._input_buffer.text == "/diagnose repo --trace error.log"
+
+    def test_tab_auto_completes_slash_command_without_open_menu(self):
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        tui = AscendTUI(provider="test", model="test-model")
+        tui._build_app()
+        tui._input_buffer.text = "/mo"
+        tui._input_buffer.cursor_position = len(tui._input_buffer.text)
+
+        tab_binding = next(
+            binding
+            for binding in tui._app.key_bindings.bindings
+            if any(str(key) in ("tab", "Keys.Tab", "Keys.ControlI") for key in binding.keys)
+        )
+        tab_binding.handler(None)
+
+        assert tui._input_buffer.text == "/models "
+
+    def test_parse_args_collects_repeated_trace_options(self):
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        tui = AscendTUI(provider="test", model="test-model")
+        parsed = tui._parse_args([
+            "repo",
+            "--trace",
+            "early.log",
+            "--trace",
+            "late.log",
+            "--trace-dir",
+            "logs",
+        ])
+
+        assert parsed["_"] == ["repo"]
+        assert parsed["trace"] == ["early.log", "late.log"]
+        assert parsed["trace_dir"] == "logs"
+
+    def test_tui_diagnose_rejects_conflicting_trace_inputs(self, tmp_path):
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        repo_path = tmp_path / "repo"
+        repo_path.mkdir()
+        (repo_path / "app.py").write_text("x = 1\n")
+        trace_path = tmp_path / "error.log"
+        trace_path.write_text("ValueError: file\n")
+
+        tui = AscendTUI(provider="test", model="test-model")
+        tui._build_app()
+        tui._run_diagnose_command([
+            str(repo_path),
+            "--trace",
+            str(trace_path),
+            "--trace-text",
+            "ValueError: text",
+        ])
+
+        for _ in range(100):
+            if not tui._task_running:
+                break
+            import time
+            time.sleep(0.01)
+
+        assert any("Use only one trace input method" in message.content for message in tui.messages)
+
     def test_non_slash_stale_completion_does_not_block_history(self):
         from types import SimpleNamespace
         from ascend_agent.cli.tui.app import AscendTUI
@@ -656,7 +737,7 @@ class TestTUIAppConstruction:
 
         tui = AscendTUI(provider="test", model="test-model")
         tui._build_app()
-        tui._run_diagnose_command([str(repo_path), "--trace", str(trace_path)])
+        tui._run_diagnose_command(["run", str(repo_path), "--trace", str(trace_path)])
 
         for _ in range(100):
             if not tui._task_running:
@@ -667,6 +748,7 @@ class TestTUIAppConstruction:
         assert any("Diagnosis Results" in message.content for message in tui.messages)
         assert any("Building context" in message.content for message in tui.messages)
         assert any("Repository Info" in message.content for message in tui.messages)
+        assert tui._last_diagnosis.context_doc.repo.path == str(repo_path.resolve())
         assert any("ValueError" in message.content for message in tui.messages)
         assert any("Confidence: 90%" in message.content for message in tui.messages)
         assert any("File: app.py:1" in message.content for message in tui.messages)
@@ -706,6 +788,64 @@ class TestTUIAppConstruction:
             "TLS certificate verification is disabled" in message.content
             for message in tui.messages
         )
+
+    def test_text_input_captures_logging_without_real_stderr_leak(self, capsys):
+        import logging
+        import threading
+        from ascend_agent.cli.tui.app import AscendTUI
+
+        entered = threading.Event()
+        release = threading.Event()
+        logger = logging.getLogger("ascend_agent.test_tui_text_capture")
+        logger.setLevel(logging.WARNING)
+
+        def callback(text):
+            entered.set()
+            logger.warning("TLS certificate verification is disabled")
+            release.wait(timeout=1)
+
+        tui = AscendTUI(provider="test", model="test-model")
+        tui.set_on_user_input(callback)
+        tui._build_app()
+        tui._handle_text_input("hello")
+
+        assert entered.wait(timeout=1)
+        release.set()
+        for _ in range(100):
+            if not tui._task_running and not any(message.content == "Working..." for message in tui.messages):
+                break
+            import time
+            time.sleep(0.01)
+
+        captured = capsys.readouterr()
+        assert "TLS certificate verification is disabled" not in captured.err
+        assert any(
+            "TLS certificate verification is disabled" in message.content
+            for message in tui.messages
+        )
+
+    def test_content_scroll_state_tracks_long_output(self):
+        from ascend_agent.cli.tui.app import AscendTUI
+        from ascend_agent.cli.tui.components.message_bubble import Message, format_messages
+
+        tui = AscendTUI(provider="test", model="test-model")
+        tui._build_app()
+        tui.add_message(Message(role="assistant", content="\n".join(f"line {i}" for i in range(80))))
+        tui._update_content_line_count(format_messages(tui.messages))
+
+        bottom = tui._content_cursor_line
+        assert bottom > 20
+
+        tui._scroll_content(-10)
+        assert tui._content_cursor_line == bottom - 10
+        assert tui._content_auto_scroll is False
+
+        tui.add_message(Message(role="system", content="new output"))
+        assert tui._content_auto_scroll is False
+
+        tui._scroll_content_to_bottom()
+        assert tui._content_auto_scroll is True
+        assert tui._content_cursor_line == tui._content_line_count - 1
 
     def test_text_input_runs_callback_in_background_and_shows_working(self):
         import threading
