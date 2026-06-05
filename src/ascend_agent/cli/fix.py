@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections import defaultdict
-from pathlib import Path
 
 import typer
 from rich.console import Console
@@ -11,13 +9,13 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 from rich.syntax import Syntax
 
+from ascend_agent.diagnosis.fix_apply import ApplyFixesResult, apply_fix_suggestions
 from ascend_agent.diagnosis.fix_engine import FixEngine
-from ascend_agent.diagnosis.models import DiagnosisOutput, FixSuggestion, FixGenerationResult, PartialFailure
+from ascend_agent.diagnosis.models import DiagnosisOutput, FixSuggestion, FixGenerationResult
 from typing import Optional
 
 from ascend_agent.cli.io import load_model_json
 from ascend_agent.diagnosis.router import create_router
-from ascend_agent.tools.file_edit import edit_file
 
 console = Console()
 fix_app = typer.Typer(name="fix", help="Generate fixes based on diagnosis findings")
@@ -68,7 +66,8 @@ def fix_run(
     accepted = _run_review_workflow(result.suggestions, repo_path)
 
     if accepted:
-        _apply_fixes_batch(accepted, repo_path)
+        console.print("\n[bold cyan]Applying accepted fixes...[/bold cyan]")
+        _display_apply_result(asyncio.run(apply_fix_suggestions(accepted, repo_path)))
     else:
         console.print("\n[yellow]No fixes were accepted. Skipping batch apply.[/yellow]")
 
@@ -147,53 +146,18 @@ def _run_review_workflow(suggestions: list[FixSuggestion], repo_path: str) -> li
     return accepted
 
 
-def _apply_fixes_batch(accepted: list[FixSuggestion], repo_path: str) -> dict:
-    """Batch apply accepted fixes (D-12).
+def _display_apply_result(result: ApplyFixesResult) -> None:
+    for file in result.files:
+        if file.ok:
+            console.print(f"[green]  ✓ {file.file_path}[/green]")
+        else:
+            console.print(f"[red]  ✗ {file.file_path}: {file.error}[/red]")
 
-    Groups accepted FixSuggestions by file_path (Pitfall 5 mitigation),
-    collapses all replacements per file, calls edit_file for each group.
-    """
-    console.print("\n[bold cyan]Applying accepted fixes...[/bold cyan]")
-
-    # Group by file_path (Pitfall 5 mitigation)
-    by_file: dict[str, list[dict]] = defaultdict(list)
-    for suggestion in accepted:
-        for replacement in suggestion.replacements:
-            by_file[suggestion.file_path].append(
-                {"old_text": replacement.old_text, "new_text": replacement.new_text}
-            )
-
-    applied = 0
-    failed = 0
-
-    for file_path, ops_dicts in by_file.items():
-        resolved_path = Path(repo_path) / file_path
-
-        try:
-            result_str = asyncio.run(edit_file(
-                file_path=str(resolved_path),
-                operations=ops_dicts,
-                repo_path=repo_path,
-            ))
-            result = json.loads(result_str)
-            if result.get("status") == "ok":
-                console.print(f"[green]  ✓ {file_path}[/green]")
-                applied += 1
-            else:
-                console.print(f"[red]  ✗ {file_path}: {result.get('error', 'unknown error')}[/red]")
-                failed += 1
-        except Exception as e:
-            console.print(f"[red]  ✗ {file_path}: {e}[/red]")
-            failed += 1
-
-    # Summary
-    if failed > 0:
-        console.print(f"\n[bold green]Applied {applied} file(s)[/bold green]"
-                      f"  [bold red]Failed: {failed}[/bold red]")
+    if result.failed > 0:
+        console.print(f"\n[bold green]Applied {result.applied} file(s)[/bold green]"
+                      f"  [bold red]Failed: {result.failed}[/bold red]")
     else:
-        console.print(f"\n[bold green]Applied {applied} file(s)[/bold green]")
-
-    return {"applied": applied, "failed": failed}
+        console.print(f"\n[bold green]Applied {result.applied} file(s)[/bold green]")
 
 
 def _save_fixes_output(accepted: list[FixSuggestion], output_path: str):
