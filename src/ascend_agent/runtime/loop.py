@@ -93,7 +93,9 @@ class AgentLoop:
                     )
                     yield ("tool_result", {"tool": tool_name, "result": result, "error": str(exc)})
                     yield ("error", f"Tool '{tool_name}' failed: {exc}")
-                    return
+                    # Continue to next tool call — the LLM will see this error
+                    # result on the next turn and can try a different approach.
+                    continue
 
                 session.add_tool_message(tool_name, result, tool_call_id=tool_call_id)
                 yield ("tool_result", {"tool": tool_name, "result": result})
