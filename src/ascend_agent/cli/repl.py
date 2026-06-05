@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 import asyncio
+import shutil
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from prompt_toolkit import PromptSession
-from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.completion import (
+    Completer,
+    Completion,
+    PathCompleter,
+    merge_completers,
+)
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.keys import Keys
+from prompt_toolkit.styles import Style
 from rich.console import Console
+from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 
@@ -22,47 +31,61 @@ from ascend_agent.runtime import (
     list_sessions,
 )
 from ascend_agent.runtime.commands import build_default_registry
+from ascend_agent.runtime.session import _sessions_dir
 
 console = Console()
 
 # ---------------------------------------------------------------------------
-# Slash-command completer
+# Slash-command completer (driven by the command registry)
 # ---------------------------------------------------------------------------
-
-_SLASH_COMMANDS: list[str] = sorted(
-    [
-        "/quit",
-        "/exit",
-        "/q",
-        "/help",
-        "/tools",
-        "/permissions",
-        "/plan",
-        "/exit-plan",
-        "/models",
-        "/sessions",
-        "/reset",
-    ]
-)
 
 
 class SlashCompleter(Completer):
-    """Tab-complete slash commands at the start of the input line."""
+    """Tab-complete slash commands at the start of the input line.
+
+    The completion list is built from the command registry so that new
+    commands added to ``build_default_registry()`` automatically appear.
+    """
 
     def get_completions(self, document: Any, complete_event: Any) -> Any:
         text = document.text_before_cursor
-        # Only complete when the input starts with "/"
         if not text.startswith("/"):
             return
         word = document.get_word_before_cursor(WORD=True)
-        for cmd in _SLASH_COMMANDS:
+        for cmd in _slash_commands():
             if cmd.startswith(word):
                 yield Completion(cmd, start_position=-len(word))
+
+
+def _slash_commands() -> list[str]:
+    """Return sorted, deduplicated slash-command names with leading ``/``."""
+    registry = build_default_registry()
+    seen: set[str] = set()
+    result: list[str] = []
+    for cmd in registry.list():
+        for name in (cmd.name,) + cmd.aliases:
+            full = f"/{name}"
+            if full not in seen:
+                seen.add(full)
+                result.append(full)
+    result.sort()
+    return result
+
+
+def _build_completer() -> Completer:
+    """Merge slash-command and filesystem-path completers."""
+    return merge_completers(
+        [
+            SlashCompleter(),
+            PathCompleter(only_directories=False, expanduser=True),
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------
 # Key bindings
 # ---------------------------------------------------------------------------
+
 
 def _make_key_bindings() -> KeyBindings:
     kb = KeyBindings()
@@ -72,23 +95,47 @@ def _make_key_bindings() -> KeyBindings:
         """Ctrl+D exits the REPL."""
         event.app.exit(exception=EOFError("exit"))
 
+    @kb.add(Keys.ControlL, eager=True)
+    def _(event: Any) -> None:
+        """Ctrl+L clears the screen."""
+        event.app.renderer.clear()
+        # Redraw by triggering a forced refresh
+        event.app.invalidate()
+
+    @kb.add(Keys.Escape, Keys.ControlM, eager=True)
+    def _(event: Any) -> None:
+        """Alt+Enter inserts a literal newline for multi-line input."""
+        event.app.current_buffer.insert_text("\n")
+
     return kb
 
+
+# ---------------------------------------------------------------------------
+# prompt_toolkit style
+# ---------------------------------------------------------------------------
+
+_PROMPT_STYLE = Style.from_dict(
+    {
+        "mode": "bold ansicyan",
+        "model": "ansigreen",
+        "path": "ansiyellow",
+        "prompt": "bold",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Confirmation handler (runs in a thread — use plain input())
 # ---------------------------------------------------------------------------
 
+
 def _make_confirm_handler() -> Any:
     """Return a sync callable suitable for ``run_in_executor``."""
 
     def confirm_tool(name: str, arguments: dict[str, Any]) -> bool:
-        # Build a one-line summary of what the tool wants to do
         cmd = arguments.get("command", "")
         if cmd:
             detail = cmd[:120]
         elif arguments:
-            # Show the first interesting key/value pair
             for key in ("file_path", "pattern", "diagnosis_json", "reproduction_json"):
                 val = arguments.get(key)
                 if val:
@@ -99,7 +146,10 @@ def _make_confirm_handler() -> Any:
         else:
             detail = "(no arguments)"
 
-        prompt = f"\n  [bold yellow]⏳ {name}[/bold yellow] wants to run:\n    {detail}\n  Allow? [y/N] "
+        prompt = (
+            f"\n  [bold yellow]⏳ {name}[/bold yellow] wants to run:\n"
+            f"    {detail}\n  Allow? [y/N] "
+        )
         try:
             answer = input(prompt)
         except (EOFError, KeyboardInterrupt):
@@ -108,6 +158,35 @@ def _make_confirm_handler() -> Any:
         return answer.strip().lower() in ("y", "yes")
 
     return confirm_tool
+
+
+# ---------------------------------------------------------------------------
+# Dynamic prompt (status line)
+# ---------------------------------------------------------------------------
+
+
+def _get_prompt(state: "ReplState") -> list[tuple[str, str]]:
+    """Build a prompt_toolkit-style prompt with inline status.
+
+    Format: ``[mode] model cwd > ``
+    """
+    mode_abbrev = state.permission_mode[:4]  # defa, plan, acce, bypa
+    model_short = (state.model or "?")[:25]
+    if state.runtime is not None:
+        wd = state.runtime.working_dir
+    else:
+        wd = Path.cwd()
+    try:
+        wd_short = wd.resolve().name
+    except Exception:
+        wd_short = str(wd)
+
+    return [
+        ("class:mode", f"[{mode_abbrev}] "),
+        ("class:model", f"{model_short} "),
+        ("class:path", f"{wd_short}"),
+        ("class:prompt", " > "),
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -134,8 +213,6 @@ class ReplState:
                 permission_mode=self.permission_mode,
                 model=self.model,
             )
-            # Wire up the confirmation handler so tools like exec_shell
-            # prompt the user instead of failing immediately.
             self.runtime.set_confirmation_handler(_make_confirm_handler())
         if self.session is None:
             self.session = self.runtime.create_session()
@@ -152,6 +229,7 @@ class ReplState:
 # prompt_toolkit session (shared across the REPL loop)
 # ---------------------------------------------------------------------------
 
+
 def _create_prompt_session() -> PromptSession:
     history_path = Path.home() / ".ascend_agent_history"
     history: FileHistory | None
@@ -161,9 +239,10 @@ def _create_prompt_session() -> PromptSession:
         history = None
 
     return PromptSession(
-        completer=SlashCompleter(),
+        completer=_build_completer(),
         history=history,
         key_bindings=_make_key_bindings(),
+        style=_PROMPT_STYLE,
         multiline=False,
         wrap_lines=True,
         enable_history_search=True,
@@ -183,7 +262,6 @@ def run_repl(provider: str = "", resume: str | None = None) -> None:
         model=cm.get_active_model(),
     )
 
-    # Resume a previous session if requested
     if resume:
         try:
             state.session = Session.load(resume)
@@ -195,26 +273,17 @@ def run_repl(provider: str = "", resume: str | None = None) -> None:
         except FileNotFoundError:
             console.print(f"[red]Session {resume[:12]}... not found.[/red]")
 
-    registry = build_default_registry()
+    _print_banner(state)
 
-    console.print(
-        Panel.fit(
-            "[bold]Ascend Agent[/bold]\n"
-            "Type [bold]/help[/bold] for commands, [bold]Tab[/bold] to complete, "
-            "[bold]Ctrl+D[/bold] to exit.\n"
-            f"Active model: [cyan]{state.model}[/cyan]",
-            border_style="cyan",
-        )
-    )
-
-    session = _create_prompt_session()
+    pt_session = _create_prompt_session()
 
     while True:
         try:
-            raw = session.prompt(
-                [("class:prompt", "ascend> ")],
-            ).strip()
-        except (EOFError, KeyboardInterrupt):
+            raw = pt_session.prompt(_get_prompt(state)).strip()
+        except KeyboardInterrupt:
+            console.print("^C")
+            continue
+        except (EOFError, SystemExit):
             _save_and_exit(state)
             return
 
@@ -231,14 +300,15 @@ def run_repl(provider: str = "", resume: str | None = None) -> None:
             console.print(f"[red]Error:[/red] {exc}")
             continue
 
-        # Run the agent turn with streaming output
         try:
             asyncio.run(_stream_turn(state, raw))
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Interrupted.[/yellow]")
+            continue
         except Exception as exc:
             console.print(f"[red]Agent turn failed:[/red] {exc}")
             continue
 
-        # Auto-save after each turn
         if state.auto_save and state.session is not None:
             try:
                 state.session.save()
@@ -246,8 +316,22 @@ def run_repl(provider: str = "", resume: str | None = None) -> None:
                 pass
 
 
+def _print_banner(state: ReplState) -> None:
+    """Print the welcome banner (also used by /clear)."""
+    console.print(
+        Panel.fit(
+            "[bold]Ascend Agent[/bold]\n"
+            "Type [bold]/help[/bold] for commands, [bold]Tab[/bold] to complete, "
+            "[bold]Ctrl+L[/bold] to clear, [bold]Ctrl+C[/bold] to interrupt, "
+            "[bold]Ctrl+D[/bold] to exit.\n"
+            f"Active model: [cyan]{state.model}[/cyan]",
+            border_style="cyan",
+        )
+    )
+
+
 async def _stream_turn(state: ReplState, user_input: str) -> None:
-    """Run one agent turn with streaming token display."""
+    """Run one agent turn with streaming output + Markdown rendering."""
     rt = state.runtime
     if rt is None:
         return
@@ -255,18 +339,15 @@ async def _stream_turn(state: ReplState, user_input: str) -> None:
     first_content = True
     async for event_type, payload in rt.run_turn(state.session, user_input):  # type: ignore[arg-type]
         if event_type == "user_message":
-            pass  # Already displayed by the prompt
-        elif event_type == "assistant_message":
-            if first_content:
-                console.print()  # newline before first output
-                first_content = False
-            console.print(payload, end="")
-        elif event_type == "final":
+            pass
+        elif event_type in ("assistant_message", "final"):
             if payload:
                 if first_content:
                     console.print()
-                console.print(f"\n{payload}")
-            console.print()
+                    first_content = False
+                console.print(Markdown(str(payload)))
+            if event_type == "final":
+                console.print()
         elif event_type == "tool_call":
             name = (
                 payload.get("name", "unknown")
@@ -290,6 +371,11 @@ def _save_and_exit(state: ReplState) -> None:
         except Exception:
             pass
     console.print("[yellow]Goodbye![/yellow]")
+
+
+# ---------------------------------------------------------------------------
+# Slash-command dispatch
+# ---------------------------------------------------------------------------
 
 
 def _dispatch(line: str, cm: ConfigManager, state: ReplState) -> None:
@@ -343,34 +429,84 @@ def _dispatch(line: str, cm: ConfigManager, state: ReplState) -> None:
         console.print(f"[green]Permission mode set to {new_mode}.[/green]")
         return
 
+    # --- bypass ------------------------------------------------------------
+    if name == "bypass":
+        state.permission_mode = "bypass"
+        if state.runtime is not None:
+            state.runtime.set_permission_mode("bypass")
+            if state.session is not None:
+                state.session.metadata["permission_mode"] = "bypass"
+        console.print("[green]Permission mode set to bypass.[/green]")
+        return
+
+    # --- accept-edits ------------------------------------------------------
+    if name == "accept-edits":
+        state.permission_mode = "accept_edits"
+        if state.runtime is not None:
+            state.runtime.set_permission_mode("accept_edits")
+            if state.session is not None:
+                state.session.metadata["permission_mode"] = "accept_edits"
+        console.print("[green]Permission mode set to accept_edits.[/green]")
+        return
+
     # --- models ------------------------------------------------------------
     if name == "models":
         from ascend_agent.cli.models import handle_models_command
 
         handle_models_command(args, cm)
         state.refresh_from_config(cm)
-        console.print(f"[green]Active model: [cyan]{state.model}[/cyan][/green]")
+        console.print(
+            f"[green]Active model: [cyan]{state.model}[/cyan][/green]"
+        )
         return
 
     # --- sessions ----------------------------------------------------------
     if name == "sessions":
-        sessions = list_sessions()
-        if not sessions:
-            console.print("[dim]No saved sessions.[/dim]")
+        _print_sessions()
+        return
+
+    # --- resume ------------------------------------------------------------
+    if name == "resume":
+        if not args:
+            console.print("[red]Usage: /resume <thread_id>[/red]")
             return
-        table = Table(title="Saved Sessions")
-        table.add_column("Thread ID", style="cyan")
-        table.add_column("Messages", justify="right")
-        table.add_column("First Message")
-        table.add_column("Last Updated")
-        for s in sessions:
-            table.add_row(
-                s["thread_id"][:12] + "...",
-                str(s["message_count"]),
-                s["first_message"],
-                s["last_updated"][:19],
+        thread_id = args[0]
+        try:
+            state.session = Session.load(thread_id)
+            state.provider = state.session.provider
+            state.model = state.session.model
+            state.runtime = Runtime.create(
+                provider=state.provider,
+                working_dir=state.session.working_dir,
+                permission_mode=state.permission_mode,
+                model=state.model,
             )
-        console.print(table)
+            state.runtime.set_confirmation_handler(_make_confirm_handler())
+            console.print(
+                f"[green]Resumed session [bold]{thread_id[:12]}...[/bold][/green]"
+            )
+        except FileNotFoundError:
+            console.print(
+                f"[red]Session {thread_id[:12]}... not found.[/red]"
+            )
+        return
+
+    # --- delete-session ----------------------------------------------------
+    if name == "delete-session":
+        if not args:
+            console.print("[red]Usage: /delete-session <thread_id>[/red]")
+            return
+        thread_id = args[0]
+        filepath = _sessions_dir() / f"{thread_id}.jsonl"
+        if filepath.exists():
+            filepath.unlink()
+            console.print(
+                f"[green]Deleted session [bold]{thread_id[:12]}...[/bold][/green]"
+            )
+        else:
+            console.print(
+                f"[red]Session {thread_id[:12]}... not found.[/red]"
+            )
         return
 
     # --- reset -------------------------------------------------------------
@@ -380,5 +516,91 @@ def _dispatch(line: str, cm: ConfigManager, state: ReplState) -> None:
         console.print("[green]Session reset.[/green]")
         return
 
+    # --- clear -------------------------------------------------------------
+    if name == "clear":
+        # Clear terminal and reprint banner
+        console.clear()
+        _print_banner(state)
+        return
+
+    # --- pwd ---------------------------------------------------------------
+    if name == "pwd":
+        wd = state.runtime.working_dir if state.runtime else Path.cwd()
+        console.print(str(wd.resolve()))
+        return
+
+    # --- cd ----------------------------------------------------------------
+    if name == "cd":
+        if not args:
+            # Show current directory
+            wd = state.runtime.working_dir if state.runtime else Path.cwd()
+            console.print(str(wd.resolve()))
+            return
+        target = Path(args[0]).expanduser().resolve()
+        if not target.is_dir():
+            console.print(f"[red]Not a directory: {target}[/red]")
+            return
+        # Recreate runtime with the new working directory
+        state.runtime = None
+        state.session = None
+        # Override working_dir for next ensure_runtime()
+        _set_cwd(target)
+        state.ensure_runtime()
+        console.print(f"[green]Working directory: {target}[/green]")
+        return
+
+    # --- status ------------------------------------------------------------
+    if name == "status":
+        state.ensure_runtime()
+        rt = state.runtime
+        s = state.session
+        msg_count = len(s.messages) if s else 0
+        thread_id = s.thread_id if s else "—"
+        created = ""
+        if s and s.transcript:
+            created = s.transcript[0].get("timestamp", "")[:19]
+        info = (
+            f"[bold]Model:[/bold]        {state.model or '?'}\n"
+            f"[bold]Provider:[/bold]     {state.provider}\n"
+            f"[bold]Permission:[/bold]   {state.permission_mode}\n"
+            f"[bold]Working dir:[/bold]  {rt.working_dir if rt else Path.cwd()}\n"
+            f"[bold]Thread ID:[/bold]    {thread_id}\n"
+            f"[bold]Messages:[/bold]     {msg_count}\n"
+            f"[bold]Created:[/bold]      {created or '—'}"
+        )
+        console.print(Panel.fit(info, title="Session Status", border_style="green"))
+        return
+
     # Unknown
     console.print(f"[red]Unknown command:[/red] /{name}")
+
+
+def _print_sessions() -> None:
+    """Print the saved-sessions table (shared by /sessions and direct call)."""
+    sessions = list_sessions()
+    if not sessions:
+        console.print("[dim]No saved sessions.[/dim]")
+        return
+    table = Table(title="Saved Sessions")
+    table.add_column("Thread ID", style="cyan")
+    table.add_column("Messages", justify="right")
+    table.add_column("First Message")
+    table.add_column("Last Updated")
+    for s in sessions:
+        table.add_row(
+            s["thread_id"][:12] + "...",
+            str(s["message_count"]),
+            s["first_message"],
+            s["last_updated"][:19],
+        )
+    console.print(table)
+
+
+def _set_cwd(path: Path) -> None:
+    """Change the process working directory (best-effort)."""
+    try:
+        import os
+
+        os.chdir(path)
+    except Exception:
+        pass

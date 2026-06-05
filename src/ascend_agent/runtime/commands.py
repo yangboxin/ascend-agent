@@ -194,4 +194,130 @@ def build_default_registry() -> CommandRegistry:
         )
     )
 
+    # -- sessions -----------------------------------------------------------
+    def _sessions(runtime, session, permission_mode, cm):
+        return ("sessions", None)
+
+    registry.register(
+        Command(
+            name="sessions",
+            description="List saved conversation sessions",
+            category="general",
+            handler=_sessions,
+        )
+    )
+
+    # -- resume -------------------------------------------------------------
+    def _resume(runtime, session, permission_mode, cm):
+        return ("resume", None)
+
+    registry.register(
+        Command(
+            name="resume",
+            description="Resume a saved session by thread ID",
+            category="general",
+            handler=_resume,
+        )
+    )
+
+    # -- delete-session -----------------------------------------------------
+    def _delete_session(runtime, session, permission_mode, cm):
+        return ("delete-session", None)
+
+    registry.register(
+        Command(
+            name="delete-session",
+            description="Delete a saved session by thread ID",
+            category="general",
+            handler=_delete_session,
+        )
+    )
+
+    # -- clear --------------------------------------------------------------
+    def _clear(runtime, session, permission_mode, cm):
+        return ("clear", None)
+
+    registry.register(
+        Command(
+            name="clear",
+            description="Clear the terminal screen",
+            category="general",
+            handler=_clear,
+            needs_runtime=False,
+        )
+    )
+
+    # -- cd -----------------------------------------------------------------
+    def _cd(runtime, session, permission_mode, cm):
+        return ("cd", None)
+
+    registry.register(
+        Command(
+            name="cd",
+            description="Change the working directory",
+            category="general",
+            handler=_cd,
+        )
+    )
+
+    # -- pwd ----------------------------------------------------------------
+    def _pwd(runtime, session, permission_mode, cm):
+        return ("pwd", None)
+
+    registry.register(
+        Command(
+            name="pwd",
+            description="Print the current working directory",
+            category="info",
+            handler=_pwd,
+        )
+    )
+
+    # -- status -------------------------------------------------------------
+    def _status(runtime, session, permission_mode, cm):
+        return ("status", None)
+
+    registry.register(
+        Command(
+            name="status",
+            description="Show current session status and metadata",
+            category="info",
+            handler=_status,
+        )
+    )
+
+    # -- bypass -------------------------------------------------------------
+    def _bypass(runtime, session, permission_mode, cm):
+        new_mode: Any = "bypass"
+        runtime.set_permission_mode(new_mode)
+        if session is not None:
+            session.metadata["permission_mode"] = new_mode
+        return ("bypass", "[green]Permission mode set to bypass.[/green]")
+
+    registry.register(
+        Command(
+            name="bypass",
+            description="Switch to bypass mode (all tools auto-allowed)",
+            category="permissions",
+            handler=_bypass,
+        )
+    )
+
+    # -- accept-edits -------------------------------------------------------
+    def _accept_edits(runtime, session, permission_mode, cm):
+        new_mode: Any = "accept_edits"
+        runtime.set_permission_mode(new_mode)
+        if session is not None:
+            session.metadata["permission_mode"] = new_mode
+        return ("accept-edits", "[green]Permission mode set to accept_edits.[/green]")
+
+    registry.register(
+        Command(
+            name="accept-edits",
+            description="Switch to accept_edits mode (auto-approve file edits)",
+            category="permissions",
+            handler=_accept_edits,
+        )
+    )
+
     return registry
