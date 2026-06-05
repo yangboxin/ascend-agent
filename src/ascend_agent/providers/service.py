@@ -8,6 +8,24 @@ from ascend_agent.providers import config_manager
 from ascend_agent.providers.config_manager import ConfigManager, ProviderRecord
 
 
+def resolve_provider(explicit: str | None = None) -> str:
+    """Resolve the active provider: explicit flag > config file > default.
+
+    Args:
+        explicit: Explicitly requested provider string, or None.
+
+    Returns:
+        The resolved provider name (e.g., "openai", "deepseek").
+        Falls back to "openai" when no configuration is found.
+    """
+    if explicit:
+        return explicit
+    try:
+        return ConfigManager().get_active()
+    except Exception:
+        return "openai"
+
+
 @dataclass(frozen=True)
 class ModelStatus:
     active_model: str

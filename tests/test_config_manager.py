@@ -2,7 +2,7 @@ import json
 
 
 def test_config_manager_writes_opencode_style_config(tmp_path, monkeypatch):
-    import ascend_agent.cli.config_manager as config_mod
+    import ascend_agent.providers.config_manager as config_mod
 
     monkeypatch.setattr(config_mod, "CONFIG_DIR", tmp_path)
     monkeypatch.setattr(config_mod, "CONFIG_FILE", tmp_path / "providers.json")
@@ -27,7 +27,7 @@ def test_config_manager_writes_opencode_style_config(tmp_path, monkeypatch):
 
 
 def test_config_manager_reads_legacy_provider_config(tmp_path, monkeypatch):
-    import ascend_agent.cli.config_manager as config_mod
+    import ascend_agent.providers.config_manager as config_mod
 
     config_file = tmp_path / "providers.json"
     config_file.write_text(

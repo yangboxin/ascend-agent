@@ -13,10 +13,11 @@ from ascend_agent.config import settings
 from ascend_agent.context.models import ConfigEnv, ContextDocument
 from ascend_agent.context.repo import RepoScanner
 from ascend_agent.context.trace import trace_from_file, trace_from_stdin, trace_from_text
-from ascend_agent.diagnosis.engine import Engine
 from ascend_agent.diagnosis.models import DiagnosisOutput, DiagnosisResult
-from ascend_agent.diagnosis.router import create_router
 from ascend_agent.diagnosis.tool_client import create_tool_client
+from ascend_agent.providers.service import resolve_provider
+from ascend_agent.runtime.permissions import PermissionMode
+from ascend_agent.runtime.workflow_runner import WorkflowRunner
 
 console = Console()
 diagnose_app = typer.Typer(name="diagnose", help="Diagnose an issue from a stack trace against a code repository")
@@ -30,14 +31,15 @@ def diagnose_run(
     trace_text: Optional[str] = typer.Option(None, "--trace-text", help="Inline pasted trace text"),
     output: Optional[str] = typer.Option(None, "--output", help="Path to write context as JSON"),
     provider: Optional[str] = typer.Option(None, "--provider", help="LLM provider (overrides root --provider)"),
+    permission_mode: PermissionMode = typer.Option("default", "--permission-mode", help="Permission mode: default, plan, accept_edits, bypass"),
 ):
     """Analyze a stack trace against a code repository.
 
     Provide the trace as a file (--trace), inline text (--trace-text), or pipe via stdin.
     The repository path is required and must be a local directory.
     """
-    resolved_provider = provider or (ctx.obj.get("provider", "openai") if ctx.obj else "openai")
-    _one_shot_mode(repo, trace, trace_text, output, resolved_provider)
+    resolved_provider = resolve_provider(provider or (ctx.obj.get("provider") if ctx.obj else None))
+    _one_shot_mode(repo, trace, trace_text, output, resolved_provider, permission_mode)
 
 
 def _one_shot_mode(
@@ -46,6 +48,7 @@ def _one_shot_mode(
     trace_text_arg: str | None,
     output_path: str | None,
     provider: str = "openai",
+    permission_mode: PermissionMode = "default",
 ):
     console.print("[bold]Ascend Diagnostic Agent[/bold]")
     console.print("[cyan]Building context...[/cyan]")
@@ -75,14 +78,14 @@ def _one_shot_mode(
 
     console.print("\n[bold cyan]Running diagnosis...[/bold cyan]")
     try:
-        router = create_router(provider=provider)
         tool_client = create_tool_client()
-        engine = Engine(
-            router=router,
+        runner = WorkflowRunner(provider=provider, permission_mode=permission_mode)
+        result, doc = runner.run_diagnosis(
             repo_path=repo,
+            trace_text=trace_text_arg,
+            trace_file=trace_path,
             search_tool=tool_client.search_code,
         )
-        result = engine.diagnose(doc)
         _display_diagnosis(result)
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")

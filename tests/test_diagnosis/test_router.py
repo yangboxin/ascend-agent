@@ -482,12 +482,16 @@ def test_chat_returns_raw_content(monkeypatch):
 
     router = ModelRouter()
     mock_create_response = Mock()
-    mock_create_response.choices = [Mock(message=Mock(content="hello"))]
+    mock_create_response.choices = [
+        Mock(message=Mock(content="hello", tool_calls=None), finish_reason="stop")
+    ]
     router._client.chat.completions.create = Mock(return_value=mock_create_response)
 
     result = router.chat([{"role": "user", "content": "ping"}])
 
-    assert result == "hello"
+    assert result.content == "hello"
+    assert result.tool_calls == []
+    assert result.finish_reason == "stop"
     assert router._client.chat.completions.create.called
 
 

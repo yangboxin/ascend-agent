@@ -10,12 +10,13 @@ from rich.prompt import Prompt
 from rich.syntax import Syntax
 
 from ascend_agent.diagnosis.fix_apply import ApplyFixesResult, apply_fix_suggestions
-from ascend_agent.diagnosis.fix_engine import FixEngine
 from ascend_agent.diagnosis.models import DiagnosisOutput, FixSuggestion, FixGenerationResult
 from typing import Optional
 
 from ascend_agent.cli.io import load_model_json
-from ascend_agent.diagnosis.router import create_router
+from ascend_agent.providers.service import resolve_provider
+from ascend_agent.runtime.permissions import PermissionMode
+from ascend_agent.runtime.workflow_runner import WorkflowRunner
 
 console = Console()
 fix_app = typer.Typer(name="fix", help="Generate fixes based on diagnosis findings")
@@ -29,6 +30,7 @@ def fix_run(
     ),
     output: Optional[str] = typer.Option(None, "--output", help="Path to write accepted fixes as JSON"),
     provider: Optional[str] = typer.Option(None, "--provider", help="LLM provider (overrides root --provider)"),
+    permission_mode: PermissionMode = typer.Option("default", "--permission-mode", help="Permission mode: default, plan, accept_edits, bypass"),
 ):
     """Generate fix suggestions for a diagnosis result. Provide a diagnosis JSON file or pipe via stdin."""
     try:
@@ -39,22 +41,19 @@ def fix_run(
 
     repo_path = diagnosis_output.context_doc.repo.path
 
-    resolved_provider = provider or (ctx.obj.get("provider", "openai") if ctx.obj else "openai")
+    resolved_provider = resolve_provider(provider or (ctx.obj.get("provider") if ctx.obj else None))
+    console.print("\n[bold cyan]Generating fix suggestions...[/bold cyan]")
     try:
-        router = create_router(provider=resolved_provider)
-        engine = FixEngine(router=router, repo_path=repo_path)
+        runner = WorkflowRunner(provider=resolved_provider, permission_mode=permission_mode)
+        result = runner.run_fix(
+            diagnosis=diagnosis_output.diagnosis_result,
+            repo_path=repo_path,
+        )
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
         console.print(
             f"[yellow]Hint: Set the appropriate API key environment variable for provider '{resolved_provider}'.[/yellow]"
         )
-        raise typer.Exit(code=1)
-
-    console.print("\n[bold cyan]Generating fix suggestions...[/bold cyan]")
-    try:
-        result = engine.generate_fixes(diagnosis_output.diagnosis_result)
-    except ValueError as e:
-        console.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(code=1)
 
     _display_fix_summary(result)

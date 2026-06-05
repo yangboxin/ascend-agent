@@ -48,7 +48,7 @@ def test_cli_diagnose_subcommand():
 
 
 def test_cli_models_shows_model_ids(tmp_path, monkeypatch):
-    import ascend_agent.cli.config_manager as config_mod
+    import ascend_agent.providers.config_manager as config_mod
 
     monkeypatch.setattr(config_mod, "CONFIG_DIR", tmp_path)
     monkeypatch.setattr(config_mod, "CONFIG_FILE", tmp_path / "providers.json")
@@ -61,7 +61,7 @@ def test_cli_models_shows_model_ids(tmp_path, monkeypatch):
 
 
 def test_cli_models_use_writes_active_model(tmp_path, monkeypatch):
-    import ascend_agent.cli.config_manager as config_mod
+    import ascend_agent.providers.config_manager as config_mod
 
     monkeypatch.setattr(config_mod, "CONFIG_DIR", tmp_path)
     monkeypatch.setattr(config_mod, "CONFIG_FILE", tmp_path / "providers.json")
@@ -74,7 +74,7 @@ def test_cli_models_use_writes_active_model(tmp_path, monkeypatch):
 
 
 def test_cli_models_rejects_unknown_builtin_model(tmp_path, monkeypatch):
-    import ascend_agent.cli.config_manager as config_mod
+    import ascend_agent.providers.config_manager as config_mod
 
     monkeypatch.setattr(config_mod, "CONFIG_DIR", tmp_path)
     monkeypatch.setattr(config_mod, "CONFIG_FILE", tmp_path / "providers.json")
@@ -87,25 +87,27 @@ def test_cli_models_rejects_unknown_builtin_model(tmp_path, monkeypatch):
 
 def test_cli_diagnose_run_basic(tmp_path, monkeypatch):
     from unittest.mock import Mock
+    from ascend_agent.diagnosis.models import DiagnosisResult
+    from ascend_agent.diagnosis.engine import Engine
 
     (tmp_path / "test.py").write_text("x = 1\n")
-    mock_engine = Mock()
-    mock_engine.diagnose.return_value = Mock(hypotheses=[], errors=[], iterations_used=0)
-    import ascend_agent.cli.diagnose as diag_mod
-    monkeypatch.setattr(diag_mod, "Engine", lambda router, repo_path, **kwargs: mock_engine)
-    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
+    mock_result = DiagnosisResult(hypotheses=[], errors=[], iterations_used=0)
+    monkeypatch.setattr(Engine, "__init__", lambda self, **kw: None)
+    monkeypatch.setattr(Engine, "diagnose", lambda self, *a, **kw: mock_result)
 
     result = runner.invoke(app, [
         "diagnose", "run", str(tmp_path),
         "--trace-text", "ValueError: test",
     ])
+
     assert result.exit_code == 0
     assert "Repository Info" in result.stdout
 
 
 def test_cli_diagnose_integration(tmp_path, monkeypatch):
-    from unittest.mock import Mock
+    from unittest.mock import Mock, patch
     from ascend_agent.diagnosis.models import DiagnosisResult, Hypothesis, Evidence
+    from ascend_agent.diagnosis.engine import Engine
 
     (tmp_path / "main.py").write_text("def test():\n    return 1\n")
 
@@ -129,15 +131,15 @@ def test_cli_diagnose_integration(tmp_path, monkeypatch):
     )
     mock_engine = Mock()
     mock_engine.diagnose.return_value = mock_result
-
-    import ascend_agent.cli.diagnose as diag_mod
-    monkeypatch.setattr(diag_mod, "Engine", lambda router, repo_path, **kwargs: mock_engine)
-    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
+    # Patch Engine at the diagnosis layer (where WorkflowRunner imports it from)
+    monkeypatch.setattr(Engine, "__init__", lambda self, **kw: None)
+    monkeypatch.setattr(Engine, "diagnose", lambda self, *a, **kw: mock_result)
 
     result = runner.invoke(app, [
         "diagnose", "run", str(tmp_path),
         "--trace-text", "ValueError: mock error",
     ])
+
     assert result.exit_code == 0
     assert "Diagnosis Results" in result.stdout
     assert "Mock root cause" in result.stdout
@@ -170,16 +172,14 @@ def _write_diagnosis_json(tmp_path) -> str:
 def test_fix_run_reads_diagnosis_json(tmp_path, monkeypatch):
     """Fix run reads diagnosis JSON from file and displays summary."""
     from unittest.mock import Mock
+    from ascend_agent.diagnosis.models import FixGenerationResult
+    from ascend_agent.diagnosis.fix_engine import FixEngine
 
     diagnosis_path = _write_diagnosis_json(tmp_path)
 
-    mock_engine = Mock()
-    mock_engine.generate_fixes.return_value = Mock(
-        suggestions=[], errors=[], total_hypotheses=0
-    )
-    import ascend_agent.cli.fix as fix_mod
-    monkeypatch.setattr(fix_mod, "FixEngine", lambda *args, **kwargs: mock_engine)
-    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
+    mock_result = FixGenerationResult(suggestions=[], errors=[], total_hypotheses=0)
+    monkeypatch.setattr(FixEngine, "__init__", lambda self, **kw: None)
+    monkeypatch.setattr(FixEngine, "generate_fixes", lambda self, *a, **kw: mock_result)
 
     result = runner.invoke(app, ["fix", "run", diagnosis_path])
     assert result.exit_code == 0
@@ -192,6 +192,7 @@ def test_fix_run_generates_suggestions(tmp_path, monkeypatch):
     from unittest.mock import Mock
     import ascend_agent.cli.fix as fix_mod
     from ascend_agent.diagnosis.models import FixSuggestion, FixGenerationResult, Replacement
+    from ascend_agent.diagnosis.fix_engine import FixEngine
 
     diagnosis_path = _write_diagnosis_json(tmp_path)
     # Create the target file so batch apply can succeed
@@ -213,11 +214,8 @@ def test_fix_run_generates_suggestions(tmp_path, monkeypatch):
         total_hypotheses=1,
     )
 
-    mock_engine = Mock()
-    mock_engine.generate_fixes.return_value = mock_result
-
-    monkeypatch.setattr(fix_mod, "FixEngine", lambda *args, **kwargs: mock_engine)
-    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
+    monkeypatch.setattr(FixEngine, "__init__", lambda self, **kw: None)
+    monkeypatch.setattr(FixEngine, "generate_fixes", lambda self, *a, **kw: mock_result)
     monkeypatch.setattr(fix_mod, "_run_review_workflow", lambda *args, **kwargs: list(args[0]) if args else [])
 
     result = runner.invoke(app, ["fix", "run", diagnosis_path])
@@ -231,6 +229,8 @@ def test_fix_run_stdin_input(tmp_path, monkeypatch):
     """Fix run reads diagnosis JSON from stdin when no file arg provided."""
     import json
     from unittest.mock import Mock
+    from ascend_agent.diagnosis.models import FixGenerationResult
+    from ascend_agent.diagnosis.fix_engine import FixEngine
 
     data = {
         "context_doc": {
@@ -241,13 +241,9 @@ def test_fix_run_stdin_input(tmp_path, monkeypatch):
         "diagnosis_result": {"hypotheses": [], "errors": [], "iterations_used": 0},
     }
 
-    mock_engine = Mock()
-    mock_engine.generate_fixes.return_value = Mock(
-        suggestions=[], errors=[], total_hypotheses=0
-    )
-    import ascend_agent.cli.fix as fix_mod
-    monkeypatch.setattr(fix_mod, "FixEngine", lambda *args, **kwargs: mock_engine)
-    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
+    mock_result = FixGenerationResult(suggestions=[], errors=[], total_hypotheses=0)
+    monkeypatch.setattr(FixEngine, "__init__", lambda self, **kw: None)
+    monkeypatch.setattr(FixEngine, "generate_fixes", lambda self, *a, **kw: mock_result)
 
     result = runner.invoke(app, ["fix", "run"], input=json.dumps(data))
     assert result.exit_code == 0
@@ -292,8 +288,8 @@ def _write_repro_diagnosis_json(tmp_path) -> str:
 
 def test_reproduce_run_command(tmp_path, monkeypatch):
     """reproduce run loads diagnosis JSON and displays results."""
-    from unittest.mock import AsyncMock, Mock
     from ascend_agent.diagnosis.models import ReproductionResult
+    from ascend_agent.reproduction.engine import ReproductionEngine
 
     diagnosis_path = _write_repro_diagnosis_json(tmp_path)
 
@@ -307,17 +303,12 @@ def test_reproduce_run_command(tmp_path, monkeypatch):
         hypothesis_id_tested=-1,
         files_changed=[],
     )
-    mock_engine = Mock()
-    mock_engine.reproduce = AsyncMock(return_value=mock_result)
 
-    monkeypatch.setattr(
-        "ascend_agent.cli.reproduce.ReproductionEngine",
-        lambda *args, **kwargs: mock_engine,
-    )
-    monkeypatch.setattr(
-        "ascend_agent.diagnosis.router.ModelRouter.__init__",
-        lambda self, **kwargs: None,
-    )
+    async def _mock_reproduce(self, *a, **kw):
+        return mock_result
+
+    monkeypatch.setattr(ReproductionEngine, "__init__", lambda self, **kw: None)
+    monkeypatch.setattr(ReproductionEngine, "reproduce", _mock_reproduce)
 
     result = runner.invoke(app, ["reproduce", "run", diagnosis_path])
     assert result.exit_code == 0
@@ -351,24 +342,25 @@ def test_reproduce_run_missing_api_key(tmp_path, monkeypatch):
 
 
 def test_cli_diagnose_root_provider_flag(tmp_path, monkeypatch):
-    """--provider flag at root level is passed to create_router."""
+    """--provider flag at root level is passed to WorkflowRunner."""
     from unittest.mock import Mock
+    from ascend_agent.diagnosis.models import DiagnosisResult
+    from ascend_agent.diagnosis.engine import Engine
 
     monkeypatch.setenv("ASCEND_DEEPSEEK_API_KEY", "sk-test-deepseek")
 
     (tmp_path / "test.py").write_text("x = 1\n")
 
-    mock_engine = Mock()
-    mock_engine.diagnose.return_value = Mock(hypotheses=[], errors=[], iterations_used=0)
-    import ascend_agent.cli.diagnose as diag_mod
-    monkeypatch.setattr(diag_mod, "Engine", lambda router, repo_path, **kwargs: mock_engine)
-    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
+    mock_result = DiagnosisResult(hypotheses=[], errors=[], iterations_used=0)
+    monkeypatch.setattr(Engine, "__init__", lambda self, **kw: None)
+    monkeypatch.setattr(Engine, "diagnose", lambda self, *a, **kw: mock_result)
 
     result = runner.invoke(app, [
         "--provider", "deepseek",
         "diagnose", "run", str(tmp_path),
         "--trace-text", "Error: test",
     ])
+
     assert result.exit_code == 0
     assert "Repository Info" in result.stdout
 
@@ -376,22 +368,23 @@ def test_cli_diagnose_root_provider_flag(tmp_path, monkeypatch):
 def test_cli_diagnose_per_command_provider_override(tmp_path, monkeypatch):
     """Per-command --provider overrides root --provider."""
     from unittest.mock import Mock
+    from ascend_agent.diagnosis.models import DiagnosisResult
+    from ascend_agent.diagnosis.engine import Engine
 
     monkeypatch.setenv("ASCEND_DEEPSEEK_API_KEY", "sk-test-deepseek")
 
     (tmp_path / "test.py").write_text("x = 1\n")
 
-    mock_engine = Mock()
-    mock_engine.diagnose.return_value = Mock(hypotheses=[], errors=[], iterations_used=0)
-    import ascend_agent.cli.diagnose as diag_mod
-    monkeypatch.setattr(diag_mod, "Engine", lambda router, repo_path, **kwargs: mock_engine)
-    monkeypatch.setattr("ascend_agent.diagnosis.router.ModelRouter.__init__", lambda self, **kwargs: None)
+    mock_result = DiagnosisResult(hypotheses=[], errors=[], iterations_used=0)
+    monkeypatch.setattr(Engine, "__init__", lambda self, **kw: None)
+    monkeypatch.setattr(Engine, "diagnose", lambda self, *a, **kw: mock_result)
 
     result = runner.invoke(app, [
         "--provider", "openai",
         "diagnose", "run", "--provider", "deepseek",
         str(tmp_path), "--trace-text", "Error: test",
     ])
+
     assert result.exit_code == 0
     assert "Repository Info" in result.stdout
 

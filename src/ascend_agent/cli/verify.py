@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
-
 from typing import Optional
 
 import typer
@@ -12,9 +10,10 @@ from rich.table import Table
 
 from ascend_agent.config import settings
 from ascend_agent.diagnosis.models import ReproductionResult
-from ascend_agent.diagnosis.router import create_router
-from ascend_agent.cli.io import load_model_json, maybe_await, write_model_json
-from ascend_agent.verification.engine import VerificationEngine
+from ascend_agent.providers.service import resolve_provider
+from ascend_agent.cli.io import load_model_json, write_model_json
+from ascend_agent.runtime.permissions import PermissionMode
+from ascend_agent.runtime.workflow_runner import WorkflowRunner
 
 console = Console()
 verify_app = typer.Typer(name="verify", help="Verify fixes by running relevant tests")
@@ -31,6 +30,7 @@ def verify_run(
     reproduction: str = typer.Argument(..., help="Path to reproduction result JSON"),
     output: str | None = typer.Option(None, "--output", "-o", help="Path to write verification result as JSON"),
     provider: Optional[str] = typer.Option(None, "--provider", help="LLM provider (overrides root --provider)"),
+    permission_mode: PermissionMode = typer.Option("default", "--permission-mode", help="Permission mode: default, plan, accept_edits, bypass"),
 ):
     """Verify fixes by running tests against the changed files.
 
@@ -44,21 +44,18 @@ def verify_run(
         raise typer.Exit(code=1)
 
     repo_path = reproduction_result.repo_path or settings.repo_path or "."
-    resolved_provider = provider or (ctx.obj.get("provider", "openai") if ctx.obj else "openai")
-
-    try:
-        router = create_router(provider=resolved_provider)
-        engine = VerificationEngine(router=router, repo_path=repo_path, settings=settings)
-    except ValueError as e:
-        console.print(f"[red]Error:[/red] {e}")
-        console.print(f"[yellow]Hint: Set the appropriate API key environment variable for provider '{resolved_provider}'.[/yellow]")
-        raise typer.Exit(code=1)
+    resolved_provider = resolve_provider(provider or (ctx.obj.get("provider") if ctx.obj else None))
 
     console.print("\n[bold cyan]Running verification...[/bold cyan]")
     try:
-        result = asyncio.run(maybe_await(engine.verify(reproduction_result)))
+        runner = WorkflowRunner(provider=resolved_provider, permission_mode=permission_mode)
+        result = runner.run_verify(
+            reproduction=reproduction_result,
+            repo_path=repo_path,
+        )
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[yellow]Hint: Set the appropriate API key environment variable for provider '{resolved_provider}'.[/yellow]")
         raise typer.Exit(code=1)
 
     status_color = "green" if result.status == "pass" else ("yellow" if result.status == "no_tests" else "red")
