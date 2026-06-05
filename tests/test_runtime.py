@@ -152,6 +152,52 @@ def test_agent_loop_runs_json_tool_call_then_final(tmp_path: Path):
     assert any(message.get("role") == "tool" for message in session.messages)
 
 
+def test_agent_loop_records_empty_native_tool_call_assistant(tmp_path: Path):
+    tool_calls = [
+        {
+            "id": "call_123",
+            "type": "function",
+            "function": {
+                "name": "code_search",
+                "arguments": '{"pattern": "needle"}',
+            },
+        }
+    ]
+    router = SequencedRouter(
+        [
+            ChatResponse(content="", tool_calls=tool_calls, finish_reason="tool_calls"),
+            "final answer",
+        ]
+    )
+    registry = ToolRegistry.from_patterns(
+        ["impl:ascend:code_search"],
+        permissions=PermissionContext(mode="default", working_dir=tmp_path),
+        working_dir=tmp_path,
+    )
+    session = Session(working_dir=tmp_path)
+    loop = AgentLoop(QueryEngine(router=router, tools=registry))
+
+    response = asyncio.run(run_turn_sync(session, "find needle", loop))
+
+    assert response == "final answer"
+    assistant = session.messages[1]
+    tool = session.messages[2]
+    assert assistant["role"] == "assistant"
+    assert assistant["content"] == ""
+    assert assistant["tool_calls"] == tool_calls
+    assert tool["role"] == "tool"
+    assert tool["tool_call_id"] == "call_123"
+
+    next_request_messages = router.messages[1]
+    assistant_request = next(
+        message for message in next_request_messages if message.get("role") == "assistant"
+    )
+    tool_request = next(
+        message for message in next_request_messages if message.get("role") == "tool"
+    )
+    assert assistant_request["tool_calls"][0]["id"] == tool_request["tool_call_id"]
+
+
 def test_runtime_create_public_facade(tmp_path: Path, monkeypatch):
     router = FakeRouter()
 
@@ -239,8 +285,15 @@ def test_session_save_and_load(tmp_path, monkeypatch):
 
     session = Session(working_dir=tmp_path, provider="openai")
     session.add_user_message("hello")
-    session.add_assistant_message("hi there")
-    session.add_tool_message("search", "found it")
+    tool_calls = [
+        {
+            "id": "call_abc",
+            "type": "function",
+            "function": {"name": "search", "arguments": "{}"},
+        }
+    ]
+    session.add_assistant_message("hi there", tool_calls=tool_calls)
+    session.add_tool_message("search", "found it", tool_call_id="call_abc")
 
     filepath = session.save()
     assert filepath.exists()
@@ -251,8 +304,10 @@ def test_session_save_and_load(tmp_path, monkeypatch):
     assert loaded.messages[0]["role"] == "user"
     assert loaded.messages[0]["content"] == "hello"
     assert loaded.messages[1]["role"] == "assistant"
+    assert loaded.messages[1]["tool_calls"] == tool_calls
     assert loaded.messages[2]["role"] == "tool"
     assert loaded.messages[2]["name"] == "search"
+    assert loaded.messages[2]["tool_call_id"] == "call_abc"
 
 
 def test_session_load_missing_raises():

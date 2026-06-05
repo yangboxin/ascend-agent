@@ -138,7 +138,11 @@ class Session:
                 role = entry.get("role")
                 if role in ("user", "assistant", "tool"):
                     msg: dict[str, Any] = {"role": role, "content": entry.get("content", "")}
+                    if role == "assistant" and entry.get("tool_calls"):
+                        msg["tool_calls"] = entry["tool_calls"]
                     if role == "tool" and entry.get("name"):
                         msg["name"] = entry["name"]
+                    if role == "tool" and entry.get("tool_call_id"):
+                        msg["tool_call_id"] = entry["tool_call_id"]
                     session.messages.append(msg)
         return session

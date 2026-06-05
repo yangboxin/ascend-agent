@@ -11,6 +11,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Literal, Union
+from uuid import uuid4
 
 from ascend_agent.providers.router import ChatResponse
 from ascend_agent.runtime.query_engine import QueryEngine
@@ -55,10 +56,14 @@ class AgentLoop:
         for turn in range(1, self.max_turns + 1):
             response: ChatResponse = self.query_engine.call_model(session)
 
-            # Prefer native tool_calls, fall back to JSON text parsing
-            tool_calls = _native_tool_calls(response) or _extract_json_tool_calls(
-                response.content
-            )
+            # Prefer native tool_calls, fall back to JSON text parsing.
+            native_tool_calls = _native_tool_calls(response)
+            if native_tool_calls:
+                tool_calls = native_tool_calls
+                assistant_tool_calls = response.tool_calls
+            else:
+                tool_calls = _extract_json_tool_calls(response.content)
+                assistant_tool_calls = _synthetic_openai_tool_calls(tool_calls or [])
 
             if not tool_calls:
                 if response.content:
@@ -66,10 +71,10 @@ class AgentLoop:
                 yield ("final", response.content)
                 return
 
+            session.add_assistant_message(
+                response.content or "", tool_calls=assistant_tool_calls
+            )
             if response.content:
-                session.add_assistant_message(
-                    response.content, tool_calls=response.tool_calls
-                )
                 yield ("assistant_message", response.content)
 
             for tool_call in tool_calls:
@@ -167,4 +172,27 @@ def _normalize_tool_call(data: dict[str, Any]) -> dict[str, Any]:
     return {
         "name": data.get("name") or data.get("tool") or "",
         "arguments": data.get("arguments") or data.get("input") or {},
+        "id": data.get("id") or f"fallback_tool_call_{uuid4().hex}",
     }
+
+
+def _synthetic_openai_tool_calls(tool_calls: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Build assistant.tool_calls for JSON fallback tool requests.
+
+    OpenAI-compatible APIs require every role=tool message to answer a
+    preceding assistant message that contains a matching tool_calls id.
+    """
+    result: list[dict[str, Any]] = []
+    for tool_call in tool_calls:
+        arguments = tool_call.get("arguments") or {}
+        result.append(
+            {
+                "id": str(tool_call.get("id") or f"fallback_tool_call_{uuid4().hex}"),
+                "type": "function",
+                "function": {
+                    "name": str(tool_call.get("name", "")),
+                    "arguments": json.dumps(arguments),
+                },
+            }
+        )
+    return result
