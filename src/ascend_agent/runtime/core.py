@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import Any, Callable, AsyncGenerator
 
 from ascend_agent.runtime.loop import AgentLoop, LoopEvent, run_turn_sync
 from ascend_agent.runtime.permissions import PermissionMode, default_policy_for_mode
@@ -76,3 +76,10 @@ class Runtime:
         self.permission_mode = mode
         if self.tools is not None:
             self.tools.permissions = default_policy_for_mode(mode, self.working_dir)
+
+    def set_confirmation_handler(
+        self, handler: Callable[[str, dict[str, Any]], bool] | None
+    ) -> None:
+        """Register a handler that prompts the user before running sensitive tools."""
+        if self.tools is not None:
+            self.tools.set_confirmation_handler(handler)

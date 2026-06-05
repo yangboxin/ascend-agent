@@ -3,7 +3,13 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
+from prompt_toolkit import PromptSession
+from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.history import FileHistory
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.keys import Keys
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -18,6 +24,95 @@ from ascend_agent.runtime import (
 from ascend_agent.runtime.commands import build_default_registry
 
 console = Console()
+
+# ---------------------------------------------------------------------------
+# Slash-command completer
+# ---------------------------------------------------------------------------
+
+_SLASH_COMMANDS: list[str] = sorted(
+    [
+        "/quit",
+        "/exit",
+        "/q",
+        "/help",
+        "/tools",
+        "/permissions",
+        "/plan",
+        "/exit-plan",
+        "/models",
+        "/sessions",
+        "/reset",
+    ]
+)
+
+
+class SlashCompleter(Completer):
+    """Tab-complete slash commands at the start of the input line."""
+
+    def get_completions(self, document: Any, complete_event: Any) -> Any:
+        text = document.text_before_cursor
+        # Only complete when the input starts with "/"
+        if not text.startswith("/"):
+            return
+        word = document.get_word_before_cursor(WORD=True)
+        for cmd in _SLASH_COMMANDS:
+            if cmd.startswith(word):
+                yield Completion(cmd, start_position=-len(word))
+
+
+# ---------------------------------------------------------------------------
+# Key bindings
+# ---------------------------------------------------------------------------
+
+def _make_key_bindings() -> KeyBindings:
+    kb = KeyBindings()
+
+    @kb.add(Keys.ControlD, eager=True)
+    def _(event: Any) -> None:
+        """Ctrl+D exits the REPL."""
+        event.app.exit(exception=EOFError("exit"))
+
+    return kb
+
+
+# ---------------------------------------------------------------------------
+# Confirmation handler (runs in a thread — use plain input())
+# ---------------------------------------------------------------------------
+
+def _make_confirm_handler() -> Any:
+    """Return a sync callable suitable for ``run_in_executor``."""
+
+    def confirm_tool(name: str, arguments: dict[str, Any]) -> bool:
+        # Build a one-line summary of what the tool wants to do
+        cmd = arguments.get("command", "")
+        if cmd:
+            detail = cmd[:120]
+        elif arguments:
+            # Show the first interesting key/value pair
+            for key in ("file_path", "pattern", "diagnosis_json", "reproduction_json"):
+                val = arguments.get(key)
+                if val:
+                    detail = f"{key}={str(val)[:100]}"
+                    break
+            else:
+                detail = str(arguments)[:120]
+        else:
+            detail = "(no arguments)"
+
+        prompt = f"\n  [bold yellow]⏳ {name}[/bold yellow] wants to run:\n    {detail}\n  Allow? [y/N] "
+        try:
+            answer = input(prompt)
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return False
+        return answer.strip().lower() in ("y", "yes")
+
+    return confirm_tool
+
+
+# ---------------------------------------------------------------------------
+# REPL state
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -39,6 +134,9 @@ class ReplState:
                 permission_mode=self.permission_mode,
                 model=self.model,
             )
+            # Wire up the confirmation handler so tools like exec_shell
+            # prompt the user instead of failing immediately.
+            self.runtime.set_confirmation_handler(_make_confirm_handler())
         if self.session is None:
             self.session = self.runtime.create_session()
         return self.runtime, self.session
@@ -48,6 +146,33 @@ class ReplState:
         self.model = cm.get_active_model()
         self.runtime = None
         self.session = None
+
+
+# ---------------------------------------------------------------------------
+# prompt_toolkit session (shared across the REPL loop)
+# ---------------------------------------------------------------------------
+
+def _create_prompt_session() -> PromptSession:
+    history_path = Path.home() / ".ascend_agent_history"
+    history: FileHistory | None
+    try:
+        history = FileHistory(str(history_path))
+    except Exception:
+        history = None
+
+    return PromptSession(
+        completer=SlashCompleter(),
+        history=history,
+        key_bindings=_make_key_bindings(),
+        multiline=False,
+        wrap_lines=True,
+        enable_history_search=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Main REPL loop
+# ---------------------------------------------------------------------------
 
 
 def run_repl(provider: str = "", resume: str | None = None) -> None:
@@ -64,7 +189,9 @@ def run_repl(provider: str = "", resume: str | None = None) -> None:
             state.session = Session.load(resume)
             state.provider = state.session.provider
             state.model = state.session.model
-            console.print(f"[green]Resumed session [bold]{resume[:12]}...[/bold][/green]")
+            console.print(
+                f"[green]Resumed session [bold]{resume[:12]}...[/bold][/green]"
+            )
         except FileNotFoundError:
             console.print(f"[red]Session {resume[:12]}... not found.[/red]")
 
@@ -73,15 +200,20 @@ def run_repl(provider: str = "", resume: str | None = None) -> None:
     console.print(
         Panel.fit(
             "[bold]Ascend Agent[/bold]\n"
-            "Type [bold]/help[/bold] for commands or [bold]/quit[/bold] to exit.\n"
+            "Type [bold]/help[/bold] for commands, [bold]Tab[/bold] to complete, "
+            "[bold]Ctrl+D[/bold] to exit.\n"
             f"Active model: [cyan]{state.model}[/cyan]",
             border_style="cyan",
         )
     )
 
+    session = _create_prompt_session()
+
     while True:
         try:
-            raw = console.input("[bold cyan]ascend>[/bold cyan] ").strip()
+            raw = session.prompt(
+                [("class:prompt", "ascend> ")],
+            ).strip()
         except (EOFError, KeyboardInterrupt):
             _save_and_exit(state)
             return
@@ -136,7 +268,11 @@ async def _stream_turn(state: ReplState, user_input: str) -> None:
                 console.print(f"\n{payload}")
             console.print()
         elif event_type == "tool_call":
-            name = payload.get("name", "unknown") if isinstance(payload, dict) else str(payload)
+            name = (
+                payload.get("name", "unknown")
+                if isinstance(payload, dict)
+                else str(payload)
+            )
             console.print(f"\n[dim]⏳ Running {name}...[/dim]")
         elif event_type == "tool_result":
             name = payload.get("tool", "?") if isinstance(payload, dict) else "?"
@@ -176,7 +312,11 @@ def _dispatch(line: str, cm: ConfigManager, state: ReplState) -> None:
     # --- tools (needs runtime) --------------------------------------------
     if name == "tools":
         state.ensure_runtime()
-        text = state.runtime.tools.describe() if state.runtime and state.runtime.tools else ""  # type: ignore[union-attr]
+        text = (
+            state.runtime.tools.describe()
+            if state.runtime and state.runtime.tools
+            else ""
+        )  # type: ignore[union-attr]
         console.print(Panel(text, title="Tools", border_style="green"))
         return
 
@@ -206,6 +346,7 @@ def _dispatch(line: str, cm: ConfigManager, state: ReplState) -> None:
     # --- models ------------------------------------------------------------
     if name == "models":
         from ascend_agent.cli.models import handle_models_command
+
         handle_models_command(args, cm)
         state.refresh_from_config(cm)
         console.print(f"[green]Active model: [cyan]{state.model}[/cyan][/green]")

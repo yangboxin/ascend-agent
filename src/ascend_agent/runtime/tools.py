@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import inspect
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ascend_agent.runtime.permissions import PermissionContext, PermissionPolicy
 from ascend_agent.tools.catalog import ToolSpec, list_tools
@@ -31,6 +33,17 @@ class ToolRegistry:
     tools: dict[str, ToolSpec]
     permissions: PermissionContext | PermissionPolicy
     working_dir: Path | None = None
+    _confirm_handler: Callable[[str, dict[str, Any]], bool] | None = None
+
+    def set_confirmation_handler(
+        self, handler: Callable[[str, dict[str, Any]], bool] | None
+    ) -> None:
+        """Register a sync callback that prompts the user before running a tool.
+
+        Called (in a thread) when ``requires_confirmation`` is True.
+        Return ``True`` to allow execution, ``False`` to deny it.
+        """
+        self._confirm_handler = handler
 
     @classmethod
     def from_patterns(
@@ -80,7 +93,20 @@ class ToolRegistry:
         if not decision.allowed:
             raise PermissionError(decision.reason)
         if decision.requires_confirmation:
-            raise PermissionError(decision.reason)
+            if self._confirm_handler is None:
+                raise PermissionError(decision.reason)
+            loop = asyncio.get_running_loop()
+            confirmed = await loop.run_in_executor(
+                None, self._confirm_handler, name, arguments
+            )
+            if not confirmed:
+                return json.dumps(
+                    {
+                        "status": "denied",
+                        "tool": name,
+                        "reason": "User denied confirmation",
+                    }
+                )
 
         func = self._bound_func(tool)
         result = func(**arguments)
