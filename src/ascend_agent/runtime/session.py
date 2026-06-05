@@ -53,8 +53,13 @@ class Session:
     def add_user_message(self, content: str) -> None:
         self._append({"role": "user", "content": content})
 
-    def add_assistant_message(self, content: str) -> None:
-        self._append({"role": "assistant", "content": content})
+    def add_assistant_message(
+        self, content: str, tool_calls: list[dict[str, Any]] | None = None
+    ) -> None:
+        msg: dict[str, Any] = {"role": "assistant", "content": content}
+        if tool_calls:
+            msg["tool_calls"] = tool_calls
+        self._append(msg)
 
     def add_tool_message(
         self, name: str, content: str, tool_call_id: str = ""

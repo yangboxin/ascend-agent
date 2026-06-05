@@ -67,7 +67,9 @@ class AgentLoop:
                 return
 
             if response.content:
-                session.add_assistant_message(response.content)
+                session.add_assistant_message(
+                    response.content, tool_calls=response.tool_calls
+                )
                 yield ("assistant_message", response.content)
 
             for tool_call in tool_calls:
