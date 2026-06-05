@@ -25,6 +25,30 @@ class ToolSpec:
     category: str
     module: str
     func: ToolCallable
+    input_schema: dict[str, Any] | None = None
+    is_read_only: bool = False
+    is_destructive: bool = False
+    max_result_size_chars: int = 10000
+    path_argument: str | None = None
+
+    async def call(self, **kwargs: Any) -> str:
+        result = self.func(**kwargs)
+        if inspect.isawaitable(result):
+            result = await result
+        return self.format_result(str(result))
+
+    def format_result(self, result: str) -> str:
+        if len(result) <= self.max_result_size_chars:
+            return result
+        return result[: self.max_result_size_chars] + (
+            f"\n... (truncated at {self.max_result_size_chars} chars)"
+        )
+
+    def get_path(self, arguments: dict[str, Any]) -> str | None:
+        if self.path_argument is None:
+            return None
+        value = arguments.get(self.path_argument)
+        return str(value) if value is not None else None
 
 
 BUILTIN_TOOLS: tuple[ToolSpec, ...] = (
@@ -34,6 +58,16 @@ BUILTIN_TOOLS: tuple[ToolSpec, ...] = (
         category="impl",
         module="ascend",
         func=search_code,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "pattern": {"type": "string"},
+                "path": {"type": "string", "default": "."},
+            },
+            "required": ["pattern"],
+        },
+        is_read_only=True,
+        path_argument="path",
     ),
     ToolSpec(
         name="edit_file",
@@ -41,6 +75,17 @@ BUILTIN_TOOLS: tuple[ToolSpec, ...] = (
         category="impl",
         module="ascend",
         func=edit_file,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "file_path": {"type": "string"},
+                "operations": {"type": "array", "items": {"type": "object"}},
+                "repo_path": {"type": "string"},
+            },
+            "required": ["file_path", "operations"],
+        },
+        is_destructive=True,
+        path_argument="file_path",
     ),
     ToolSpec(
         name="exec_shell",
@@ -48,6 +93,15 @@ BUILTIN_TOOLS: tuple[ToolSpec, ...] = (
         category="impl",
         module="ascend",
         func=exec_shell,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "command": {"type": "string"},
+                "timeout": {"type": "integer", "default": 60},
+                "cwd": {"type": "string"},
+            },
+            "required": ["command"],
+        },
     ),
     ToolSpec(
         name="run_test",
@@ -55,6 +109,15 @@ BUILTIN_TOOLS: tuple[ToolSpec, ...] = (
         category="impl",
         module="ascend",
         func=run_test,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "reproduction_json": {"type": "string"},
+                "repo_path": {"type": "string"},
+                "timeout": {"type": "integer", "default": 300},
+            },
+            "required": ["reproduction_json"],
+        },
     ),
     ToolSpec(
         name="diagnose_trace",
@@ -62,6 +125,16 @@ BUILTIN_TOOLS: tuple[ToolSpec, ...] = (
         category="workflow",
         module="ascend",
         func=diagnose_trace,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "repo_path": {"type": "string", "default": "."},
+                "trace_text": {"type": "string"},
+                "trace_file": {"type": "string"},
+                "provider": {"type": "string", "default": "openai"},
+            },
+        },
+        is_read_only=True,
     ),
     ToolSpec(
         name="generate_fixes",
@@ -69,6 +142,16 @@ BUILTIN_TOOLS: tuple[ToolSpec, ...] = (
         category="workflow",
         module="ascend",
         func=generate_fixes,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "diagnosis_json": {"type": "string"},
+                "repo_path": {"type": "string", "default": "."},
+                "provider": {"type": "string", "default": "openai"},
+            },
+            "required": ["diagnosis_json"],
+        },
+        is_read_only=True,
     ),
     ToolSpec(
         name="reproduce_issue",
@@ -76,6 +159,16 @@ BUILTIN_TOOLS: tuple[ToolSpec, ...] = (
         category="workflow",
         module="ascend",
         func=reproduce_issue,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "diagnosis_json": {"type": "string"},
+                "repo_path": {"type": "string", "default": "."},
+                "trace_text": {"type": "string"},
+                "provider": {"type": "string", "default": "openai"},
+            },
+            "required": ["diagnosis_json"],
+        },
     ),
     ToolSpec(
         name="verify_fix",
@@ -83,6 +176,16 @@ BUILTIN_TOOLS: tuple[ToolSpec, ...] = (
         category="workflow",
         module="ascend",
         func=verify_fix,
+        input_schema={
+            "type": "object",
+            "properties": {
+                "reproduction_json": {"type": "string"},
+                "repo_path": {"type": "string", "default": "."},
+                "provider": {"type": "string", "default": "openai"},
+                "timeout": {"type": "integer", "default": 300},
+            },
+            "required": ["reproduction_json"],
+        },
     ),
 )
 

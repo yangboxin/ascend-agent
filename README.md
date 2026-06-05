@@ -75,7 +75,26 @@ Stack Trace:
 Environment: Python 3.10.8 on darwin
 ```
 
-#### REPL mode
+### Runtime chat mode
+
+```bash
+ascend-agent chat
+# or, in a TTY:
+ascend-agent
+```
+
+The chat entry point uses the layered runtime instead of a one-shot workflow.
+It supports slash commands:
+
+- `/help` - show commands
+- `/models` - inspect or switch provider/model configuration
+- `/tools` - list registered runtime tools
+- `/permissions` - show the current permission mode
+- `/plan` - enter read-only plan mode
+- `/exit-plan` - return to default permissions
+- `/reset` - start a new session
+
+#### diagnose REPL mode
 
 ```bash
 ascend-agent diagnose run /path/to/repo --interactive
@@ -183,41 +202,44 @@ ascend-agent/
 
 ## Architecture
 
-The agent uses a layered architecture:
+The project is moving through a double-track runtime migration. The legacy
+commands remain stable, while `ascend-agent chat` and the root interactive
+entry point use the new layered runtime.
 
 ```
-┌───────────────────────────────────────────────┐
-│  CLI Layer (Typer + Rich)                     │
-│  diagnose | fix | reproduce | verify          │
-│  --provider openai|deepseek|qwen              │
-└───────────────────┬───────────────────────────┘
-                    │
-┌───────────────────▼───────────────────────────┐
-│  Engine Layer (4 engines, Pydantic results)   │
-│  Engine | FixEngine | ReproductionEngine      │
-│  VerificationEngine                           │
-└───────────────────┬───────────────────────────┘
-                    │
-┌───────────────────▼───────────────────────────┐
-│  Model Router (create_router + ModelRouter)   │
-│  ProviderConfig | PROVIDER_DEFAULTS           │
-│  .parse() → json.loads fallback on 400        │
-│  openai | deepseek | qwen                     │
-└───────────────────┬───────────────────────────┘
-                    │
-┌───────────────────▼───────────────────────────┐
-│  Context Builder (Pydantic models)            │
-│  RepoScanner + TraceParser → ContextDocument  │
-└───────────────────┬───────────────────────────┘
-                    │
-┌───────────────────▼───────────────────────────┐
-│  MCP Tool Layer (subprocess, STDIO)           │
-│  code_search | edit_file | exec_shell         │
-│  run_test (local + SSH via asyncssh)          │
-└───────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  Interaction Layer                                          │
+│  Typer/Rich CLI, runtime chat REPL, slash commands           │
+│  Legacy: diagnose | fix | reproduce | verify                 │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────┐
+│  Orchestration Layer                                         │
+│  Runtime, Session, QueryEngine, prompt/context assembly       │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────┐
+│  Agent Loop                                                  │
+│  bounded model turn -> JSON tool call -> tool result -> final  │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────┐
+│  Tool Layer                                                  │
+│  ToolRegistry, ToolSpec metadata, PermissionContext modes     │
+│  code_search | edit_file | exec_shell | run_test | workflows  │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+┌────────────────────────────▼────────────────────────────────┐
+│  Provider Communication Layer                                │
+│  ModelRouter: completion(), chat(), chat_stream()             │
+│  OpenAI-compatible providers: openai | deepseek | qwen        │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 Key design decisions:
+- **Double-track transition** - old workflow commands keep their public flags and JSON outputs; new chat flows use `Runtime.create()` and `Runtime.run_turn()`.
+- **Permission modes** - `default` allows read tools and asks for edits/shell/tests, `plan` is read-only, `accept_edits` permits workspace edits, and `bypass` is explicit.
+- **Tool calling fallback** - providers can return `{"tool_call": {"name": "...", "arguments": {...}}}` when native tool calling is unavailable.
 - **CLI and MCP server are separate processes** — the CLI launches the agent workflow; the MCP server runs as a subprocess providing tools to the orchestrator (Phase 2+)
 - **Three trace input methods** — file (`--trace`), stdin pipe, inline paste (`--trace-text`)
 - **No caching** — fresh repo scan per invocation
