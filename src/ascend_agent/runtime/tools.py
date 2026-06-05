@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import inspect
 import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 from ascend_agent.runtime.permissions import PermissionContext, PermissionPolicy
 from ascend_agent.tools.catalog import ToolSpec, list_tools
@@ -33,14 +32,15 @@ class ToolRegistry:
     tools: dict[str, ToolSpec]
     permissions: PermissionContext | PermissionPolicy
     working_dir: Path | None = None
-    _confirm_handler: Callable[[str, dict[str, Any]], bool] | None = None
+    _confirm_handler: Callable[[str, dict[str, Any]], Awaitable[bool]] | None = None
 
     def set_confirmation_handler(
-        self, handler: Callable[[str, dict[str, Any]], bool] | None
+        self,
+        handler: Callable[[str, dict[str, Any]], Awaitable[bool]] | None,
     ) -> None:
-        """Register a sync callback that prompts the user before running a tool.
+        """Register an async callback that prompts the user before running a tool.
 
-        Called (in a thread) when ``requires_confirmation`` is True.
+        Called when ``requires_confirmation`` is True.
         Return ``True`` to allow execution, ``False`` to deny it.
         """
         self._confirm_handler = handler
@@ -95,10 +95,7 @@ class ToolRegistry:
         if decision.requires_confirmation:
             if self._confirm_handler is None:
                 raise PermissionError(decision.reason)
-            loop = asyncio.get_running_loop()
-            confirmed = await loop.run_in_executor(
-                None, self._confirm_handler, name, arguments
-            )
+            confirmed = await self._confirm_handler(name, arguments)
             if not confirmed:
                 return json.dumps(
                     {

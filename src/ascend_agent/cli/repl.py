@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import shutil
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +31,7 @@ from ascend_agent.runtime import (
     list_sessions,
 )
 from ascend_agent.runtime.commands import build_default_registry
+from ascend_agent.runtime.permissions import PermissionContext, PermissionRule
 from ascend_agent.runtime.session import _sessions_dir
 
 console = Console()
@@ -124,14 +125,23 @@ _PROMPT_STYLE = Style.from_dict(
 )
 
 # ---------------------------------------------------------------------------
-# Confirmation handler (runs in a thread — use plain input())
+# Confirmation handler (async — uses prompt_toolkit for arrow-key selection)
 # ---------------------------------------------------------------------------
 
 
-def _make_confirm_handler() -> Any:
-    """Return a sync callable suitable for ``run_in_executor``."""
+def _make_confirm_handler(state: "ReplState") -> Any:
+    """Return an async callable that shows an interactive confirmation prompt.
 
-    def confirm_tool(name: str, arguments: dict[str, Any]) -> bool:
+    The user can navigate options with arrow keys or press a hotkey:
+      - ``y`` / Enter on *Allow once*  → run this one time
+      - ``a`` / Enter on *Always allow this tool*  → auto-allow all future
+        calls to this tool (adds a ``PermissionRule``)
+      - ``c`` / Enter on *Always allow this command*  → auto-allow this
+        exact command (adds a ``PermissionRule`` with a regex pattern)
+      - ``n`` / Ctrl+C  → deny
+    """
+
+    async def confirm_tool(name: str, arguments: dict[str, Any]) -> bool:
         cmd = arguments.get("command", "")
         if cmd:
             detail = cmd[:120]
@@ -146,18 +156,124 @@ def _make_confirm_handler() -> Any:
         else:
             detail = "(no arguments)"
 
-        prompt = (
-            f"\n  [bold yellow]⏳ {name}[/bold yellow] wants to run:\n"
-            f"    {detail}\n  Allow? [y/N] "
+        # Run the prompt_toolkit UI in a thread so it doesn't conflict with
+        # the asyncio event loop.  prompt_toolkit's sync ``prompt()`` creates
+        # its own temporary event loop for terminal I/O.
+        loop = asyncio.get_running_loop()
+        choice = await loop.run_in_executor(
+            None, _sync_confirm_ui, name, detail, bool(cmd)
         )
-        try:
-            answer = input(prompt)
-        except (EOFError, KeyboardInterrupt):
-            print()
-            return False
-        return answer.strip().lower() in ("y", "yes")
+        # --- apply "always allow" rules ------------------------------------
+        if choice in ("a", "c") and state.runtime is not None:
+            perms = state.runtime.tools.permissions  # type: ignore[union-attr]
+            if isinstance(perms, PermissionContext):
+                if choice == "a":
+                    rule = PermissionRule(action="allow", tool=name)
+                else:
+                    rule = PermissionRule(
+                        action="allow",
+                        tool=name,
+                        command_pattern=re.escape(cmd),
+                    )
+                perms.rules.append(rule)
+                console.print(
+                    f"[dim]Added rule: always allow [bold]{name}[/bold]"
+                    + (f" with pattern '{cmd[:60]}'" if choice == "c" else "")
+                    + "[/dim]"
+                )
+        return choice in ("y", "a", "c")
 
     return confirm_tool
+
+
+def _sync_confirm_ui(name: str, detail: str, has_command: bool) -> str:
+    """Show an arrow-key navigable confirmation prompt (blocking).
+
+    Runs in a thread via ``run_in_executor`` so it doesn't block the
+    asyncio event loop.  Uses prompt_toolkit's synchronous ``prompt()``.
+
+    Returns one of ``"y"``, ``"n"``, ``"a"`` (always allow tool),
+    or ``"c"`` (always allow this command).
+    """
+    from prompt_toolkit.shortcuts import prompt as pt_prompt
+
+    options: list[tuple[str, str]] = [
+        ("n", "Deny"),
+        ("y", "Allow once"),
+    ]
+    if has_command:
+        options.append(("c", "Always allow this command"))
+    options.append(("a", "Always allow this tool"))
+
+    selected = [0]  # mutable so nested closures can mutate it
+
+    kb = KeyBindings()
+
+    # --- navigation --------------------------------------------------------
+    @kb.add(Keys.Left, eager=True)
+    def _nav_left(event: Any) -> None:
+        selected[0] = max(0, selected[0] - 1)
+
+    @kb.add(Keys.Right, eager=True)
+    def _nav_right(event: Any) -> None:
+        selected[0] = min(len(options) - 1, selected[0] + 1)
+
+    # --- hotkeys (one per option) ------------------------------------------
+    for idx, (key_char, _label) in enumerate(options):
+        _add_hotkey(kb, idx, key_char, selected)
+
+    # --- Enter confirms current selection ----------------------------------
+    @kb.add(Keys.Enter, eager=True)
+    def _on_enter(event: Any) -> None:
+        event.app.exit(result=options[selected[0]][0])
+
+    # --- Ctrl+C = deny -----------------------------------------------------
+    @kb.add(Keys.ControlC, eager=True)
+    def _on_ctrl_c(event: Any) -> None:
+        event.app.exit(result="n")
+
+    # --- dynamic toolbar ---------------------------------------------------
+    def _toolbar() -> str:
+        parts: list[str] = []
+        for i, (_key, label) in enumerate(options):
+            if i == selected[0]:
+                parts.append(f"[> {label} <]")
+            else:
+                parts.append(f"  {label}  ")
+        return "  " + "  │  ".join(parts) + "  "
+
+    try:
+        choice = pt_prompt(
+            f"\n  ⏳ {name} wants to run:\n    {detail}\n",
+            key_bindings=kb,
+            bottom_toolbar=_toolbar,
+            default="",
+        )
+    except (EOFError, KeyboardInterrupt):
+        return "n"
+    return choice or "n"
+
+
+def _add_hotkey(
+    kb: KeyBindings,
+    idx: int,
+    key_char: str,
+    selected: list[int],
+) -> None:
+    """Register a hotkey that selects option *idx* and exits the prompt.
+
+    Uses a factory function so *idx* and *key_char* are captured by value
+    (via default arguments), avoiding late-binding closure bugs.
+    """
+
+    def _make_handler(i: int, k: str):
+        @kb.add(k, eager=True)
+        @kb.add(k.upper(), eager=True)
+        def _handler(event: Any) -> None:
+            selected[0] = i
+            event.app.exit(result=k)
+
+    _make_handler(idx, key_char)
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +329,7 @@ class ReplState:
                 permission_mode=self.permission_mode,
                 model=self.model,
             )
-            self.runtime.set_confirmation_handler(_make_confirm_handler())
+            self.runtime.set_confirmation_handler(_make_confirm_handler(self))
         if self.session is None:
             self.session = self.runtime.create_session()
         return self.runtime, self.session
@@ -481,7 +597,7 @@ def _dispatch(line: str, cm: ConfigManager, state: ReplState) -> None:
                 permission_mode=state.permission_mode,
                 model=state.model,
             )
-            state.runtime.set_confirmation_handler(_make_confirm_handler())
+            state.runtime.set_confirmation_handler(_make_confirm_handler(state))
             console.print(
                 f"[green]Resumed session [bold]{thread_id[:12]}...[/bold][/green]"
             )

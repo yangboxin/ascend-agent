@@ -112,8 +112,11 @@ class QueryEngine:
             if role not in {"user", "assistant", "tool"}:
                 continue
             item: dict[str, Any] = {"role": role, "content": message.get("content", "")}
-            if role == "tool" and message.get("name"):
-                item["name"] = message["name"]
+            if role == "tool":
+                if message.get("name"):
+                    item["name"] = message["name"]
+                if message.get("tool_call_id"):
+                    item["tool_call_id"] = message["tool_call_id"]
             result.append(item)
         return result
 

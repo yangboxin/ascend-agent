@@ -72,6 +72,7 @@ class AgentLoop:
 
             for tool_call in tool_calls:
                 tool_name = str(tool_call.get("name", ""))
+                tool_call_id = str(tool_call.get("id", ""))
                 arguments = tool_call.get("arguments") or {}
                 yield ("tool_call", {"name": tool_name, "arguments": arguments})
 
@@ -85,12 +86,14 @@ class AgentLoop:
                             "error": str(exc),
                         }
                     )
-                    session.add_tool_message(tool_name or "unknown", result)
+                    session.add_tool_message(
+                        tool_name or "unknown", result, tool_call_id=tool_call_id
+                    )
                     yield ("tool_result", {"tool": tool_name, "result": result, "error": str(exc)})
                     yield ("error", f"Tool '{tool_name}' failed: {exc}")
                     return
 
-                session.add_tool_message(tool_name, result)
+                session.add_tool_message(tool_name, result, tool_call_id=tool_call_id)
                 yield ("tool_result", {"tool": tool_name, "result": result})
 
         # Max turns exhausted
