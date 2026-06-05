@@ -2,13 +2,14 @@
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from typer.testing import CliRunner
 
 from ascend_agent.cli.app import app
 from ascend_agent.cli.verify import verify_app
 from ascend_agent.diagnosis.models import VerificationResult
+from ascend_agent.runtime.workflow_runner import WorkflowRunner
 
 runner = CliRunner()
 _FIXTURE_DIR = Path(__file__).resolve().parent.parent / "fixtures"
@@ -52,12 +53,8 @@ def test_verify_run_with_fixture(tmp_path):
 
     pass_result = _make_pass_result()
 
-    with patch("ascend_agent.cli.verify.VerificationEngine") as MockEngine:
-        mock_engine = MagicMock()
-        mock_engine.verify.return_value = pass_result
-        MockEngine.return_value = mock_engine
-
-        with patch("ascend_agent.diagnosis.router.ModelRouter.__init__", return_value=None):
+    with patch.object(WorkflowRunner, "__init__", lambda self, **kwargs: None):
+        with patch.object(WorkflowRunner, "run_verify", lambda self, **kwargs: pass_result):
             result = runner.invoke(verify_app, ["run", str(fixture_path)])
 
     assert result.exit_code == 0
@@ -74,12 +71,8 @@ def test_verify_output_json(tmp_path):
     output_path = tmp_path / "verify_result.json"
     pass_result = _make_pass_result()
 
-    with patch("ascend_agent.cli.verify.VerificationEngine") as MockEngine:
-        mock_engine = MagicMock()
-        mock_engine.verify.return_value = pass_result
-        MockEngine.return_value = mock_engine
-
-        with patch("ascend_agent.diagnosis.router.ModelRouter.__init__", return_value=None):
+    with patch.object(WorkflowRunner, "__init__", lambda self, **kwargs: None):
+        with patch.object(WorkflowRunner, "run_verify", lambda self, **kwargs: pass_result):
             result = runner.invoke(verify_app, [
                 "run", str(fixture_path), "--output", str(output_path),
             ])
